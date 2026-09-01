@@ -7,7 +7,7 @@ import { connect } from "cloudflare:sockets";
 
 const DEFAULT_PASSWORD = "galaxy-trojan-secure";
 const DEFAULT_PROXY_IP = "cdn-b100.xn--b6gac.eu.org";
-const DEFAULT_PROXY_URL = "https://gprox-galaxy.github.io/PROXYIP.txt";
+const DEFAULT_PROXY_URL = "https://galaxytunnel.github.io/PROXYIP.txt";
 const DEFAULT_DOH_URL = "https://cloudflare-dns.com/dns-query";
 const DEFAULT_WS_PATH = "galaxy-trojan";
 
