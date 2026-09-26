@@ -6,7 +6,7 @@ import { connect } from "cloudflare:sockets";
 // ============================================
 
 const DEFAULT_PASSWORD = "galaxy-trojan-secure";
-const DEFAULT_PROXY_IP = "bpb.yousef.isegaro.com";
+const DEFAULT_PROXY_IP = "lelouch.abrdns.com";
 const DEFAULT_PROXY_URL = "https://galaxytunnel.github.io/PROXYIP.txt";
 const DEFAULT_DOH_URL = "https://cloudflare-dns.com/dns-query";
 const DEFAULT_WS_PATH = "galaxy-trojan";
@@ -93,12 +93,13 @@ function sha224(str) {
 // Hybrid Proxy IP Pool (Fast Local CDN Domains)
 // ============================================
 const DEFAULT_LOCAL_PROXIES = [
-    "cdn-b100.xn--b6gac.eu.org",
-    "cdn.xn--b6gac.eu.org",
-    "bpb.yousef.isegaro.com",
-    "icook.hk",
-    "icook.tw",
-    "www.visa.com.sg"
+    "lelouch.abrdns.com",
+    "blacknight.abrdns.com",
+    "net.galaxytunnel.linkpc.net",
+    "pro.galaxytunnel.linkpc.net",
+    "privacy.bbroot.com",
+    "www.visa.com.sg",
+    "galax.cc.cd"
 ];
 
 let activeProxyPool = [...DEFAULT_LOCAL_PROXIES];
