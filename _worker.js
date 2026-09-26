@@ -1,25 +1,29 @@
 import { connect } from "cloudflare:sockets";
 
 // ============================================
-// GALAXY TUNNEL - TROJAN PROTOCOL CORE
-// High-Speed Trojan over WebSocket & gRPC
+// DEFAULT CONFIGURATION & ENVIRONMENT
 // ============================================
-
-const DEFAULT_PASSWORD = "galaxy-trojan-secure";
+const DEFAULT_UUID = "";
+const DEFAULT_TROJAN_PASS = "";
 const DEFAULT_PROXY_IP = "lelouch.abrdns.com";
-const DEFAULT_PROXY_URL = "https://galaxytunnel.github.io/PROXYIP.txt";
-const DEFAULT_DOH_URL = "https://cloudflare-dns.com/dns-query";
-const DEFAULT_WS_PATH = "galaxy-trojan";
+const DEFAULT_DOH_URLS = [
+    "https://dns.google/dns-query",
+    "https://cloudflare-dns.com/dns-query",
+    "https://dns.alidns.com/dns-query",
+    "https://dns.quad9.net/dns-query",
+    "https://doh.opendns.com/dns-query",
+    "https://1.1.1.1/dns-query"
+];
+const DEFAULT_WS_PATH = "galaxy-tunnel";
 
-let activeTrojanPassword = DEFAULT_PASSWORD;
+let userID = "";
+let trojanPassword = "";
 let proxyIP = DEFAULT_PROXY_IP;
-let githubProxyURL = DEFAULT_PROXY_URL;
-let dohURL = DEFAULT_DOH_URL;
+let dohURLs = [...DEFAULT_DOH_URLS];
 let wsPath = DEFAULT_WS_PATH;
 
 // ============================================
-// Pure JavaScript SHA-224 Implementation
-// (Standard Trojan Password Hash Algorithm)
+// SHA-224 Hash Implementation for Trojan
 // ============================================
 function sha224(str) {
     if (!str) return "";
@@ -42,55 +46,52 @@ function sha224(str) {
         0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
     ];
 
-    let H = [
-        0xc1059ed8, 0x367cd507, 0x3070dd17, 0xf70e5939,
-        0xffc00b31, 0x68581511, 0x64f98fa7, 0xbefa4fa4
-    ];
+    let H0 = 0xc1059ed8, H1 = 0x367cd507, H2 = 0x3070dd17, H3 = 0xf70e5939;
+    let H4 = 0xffc00b31, H5 = 0x68581511, H6 = 0x64f98fa7, H7 = 0xbefa4fa4;
 
-    const utf8 = new TextEncoder().encode(str);
-    const bitLen = utf8.length * 8;
-    const padLen = (((utf8.length + 8) >> 6) + 1) << 6;
-    const msg = new Uint8Array(padLen);
-    msg.set(utf8);
-    msg[utf8.length] = 0x80;
-    const view = new DataView(msg.buffer);
-    view.setUint32(padLen - 4, bitLen >>> 0);
-    view.setUint32(padLen - 8, Math.floor(bitLen / 0x100000000));
+    const utf8 = new TextEncoder().encode(str.trim());
+    const l = utf8.length;
+    const bitLen = l * 8;
+    const k = (56 - ((l + 1) % 64) + 64) % 64;
+    const padded = new Uint8Array(l + 1 + k + 8);
+    padded.set(utf8);
+    padded[l] = 0x80;
+    const view = new DataView(padded.buffer);
+    view.setUint32(padded.length - 4, bitLen, false);
 
     const W = new Uint32Array(64);
-    for (let i = 0; i < padLen; i += 64) {
+    for (let i = 0; i < padded.length; i += 64) {
         for (let t = 0; t < 16; t++) {
-            W[t] = view.getUint32(i + t * 4);
+            W[t] = view.getUint32(i + t * 4, false);
         }
         for (let t = 16; t < 64; t++) {
             W[t] = (gamma1(W[t - 2]) + W[t - 7] + gamma0(W[t - 15]) + W[t - 16]) >>> 0;
         }
-        let a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+
+        let a = H0, b = H1, c = H2, d = H3, e = H4, f = H5, g = H6, h = H7;
         for (let t = 0; t < 64; t++) {
             const T1 = (h + sigma1(e) + choice(e, f, g) + K[t] + W[t]) >>> 0;
             const T2 = (sigma0(a) + majority(a, b, c)) >>> 0;
             h = g; g = f; f = e; e = (d + T1) >>> 0;
             d = c; c = b; b = a; a = (T1 + T2) >>> 0;
         }
-        H[0] = (H[0] + a) >>> 0;
-        H[1] = (H[1] + b) >>> 0;
-        H[2] = (H[2] + c) >>> 0;
-        H[3] = (H[3] + d) >>> 0;
-        H[4] = (H[4] + e) >>> 0;
-        H[5] = (H[5] + f) >>> 0;
-        H[6] = (H[6] + g) >>> 0;
-        H[7] = (H[7] + h) >>> 0;
+
+        H0 = (H0 + a) >>> 0; H1 = (H1 + b) >>> 0; H2 = (H2 + c) >>> 0; H3 = (H3 + d) >>> 0;
+        H4 = (H4 + e) >>> 0; H5 = (H5 + f) >>> 0; H6 = (H6 + g) >>> 0; H7 = (H7 + h) >>> 0;
     }
 
-    let hex = "";
-    for (let i = 0; i < 7; i++) {
-        hex += H[i].toString(16).padStart(8, "0");
-    }
-    return hex;
+    const out = [H0, H1, H2, H3, H4, H5, H6];
+    return out.map(n => n.toString(16).padStart(8, "0")).join("");
+}
+
+function isValidUUID(uuid) {
+    if (!uuid) return false;
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    return uuidRegex.test(uuid.trim());
 }
 
 // ============================================
-// Hybrid Proxy IP Pool (Fast Local CDN Domains)
+// Hybrid Proxy IP Pool (Local Fast Safe List)
 // ============================================
 const DEFAULT_LOCAL_PROXIES = [
     "lelouch.abrdns.com",
@@ -98,37 +99,21 @@ const DEFAULT_LOCAL_PROXIES = [
     "net.galaxytunnel.linkpc.net",
     "pro.galaxytunnel.linkpc.net",
     "privacy.bbroot.com",
-    "www.visa.com.sg",
     "galax.cc.cd"
 ];
 
 let activeProxyPool = [...DEFAULT_LOCAL_PROXIES];
 
-async function getHybridProxyIP(defaultProxy, rawUrl) {
-    if (!rawUrl || rawUrl.includes("YOUR_USERNAME")) {
-        return activeProxyPool[Math.floor(Math.random() * activeProxyPool.length)] || defaultProxy;
-    }
-    try {
-        const response = await fetch(rawUrl, {
-            cf: { cacheTtl: 300, cacheEverything: true }
-        });
-        if (response.ok) {
-            const text = await response.text();
-            const fetchedIPs = text.split('\n')
-                .map(line => line.trim())
-                .filter(line => line.length > 0 && !line.startsWith('#'));
-            
-            if (fetchedIPs.length > 0) {
-                activeProxyPool = Array.from(new Set([...fetchedIPs, ...DEFAULT_LOCAL_PROXIES]));
-                if (defaultProxy && !activeProxyPool.includes(defaultProxy)) {
-                    activeProxyPool.unshift(defaultProxy);
-                }
-            }
-        }
-    } catch (err) {
-        console.warn("[Trojan] ProxyIP fetch error, using local fallback pool:", err);
-    }
-    return activeProxyPool[Math.floor(Math.random() * activeProxyPool.length)] || defaultProxy;
+function getLocalProxyIP(defaultProxy) {
+    return activeProxyPool[
+        Math.floor(Math.random() * activeProxyPool.length)
+    ] || defaultProxy;
+}
+
+function normalizeDohURLs(value) {
+    const values = Array.isArray(value) ? value : String(value || "").split(/[\n,]+/);
+    const urls = values.map(v => String(v).trim()).filter(v => /^https:\/\//i.test(v));
+    return urls.length ? Array.from(new Set(urls)) : [...DEFAULT_DOH_URLS];
 }
 
 // ============================================
@@ -179,7 +164,7 @@ function isAdDomain(domain) {
 }
 
 // ============================================
-// Direct Local Bypass
+// Direct Local Bypass & Intranet Logic
 // ============================================
 const DIRECT_BYPASS_DOMAINS = [
     "localhost",
@@ -192,9 +177,11 @@ const DIRECT_BYPASS_DOMAINS = [
 function isPrivateOrLocalAddress(address) {
     if (!address) return false;
     const lower = address.toLowerCase().trim();
+    
     if (DIRECT_BYPASS_DOMAINS.some(d => lower === d || lower.endsWith("." + d))) {
         return true;
     }
+
     if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(lower)) return true;
     if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(lower)) return true;
     if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(lower)) return true;
@@ -204,9 +191,11 @@ function isPrivateOrLocalAddress(address) {
         if (secondOctet >= 16 && secondOctet <= 31) return true;
     }
     if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(lower)) return true;
+
     if (lower === "::1" || lower.startsWith("fc00:") || lower.startsWith("fe80:") || lower.startsWith("fd")) {
         return true;
     }
+
     return false;
 }
 
@@ -217,26 +206,31 @@ function extractDynamicConfig(url) {
     const parsed = new URL(url);
     const pathSegments = parsed.pathname.split("/").filter(Boolean);
 
-    let extractedPassword = null;
+    let extractedUUID = null;
+    let extractedTrojanPass = null;
     let extractedPath = null;
     let isSubRequest = false;
 
     // Check query params
-    const qPwd = parsed.searchParams.get("pwd") || parsed.searchParams.get("password") || parsed.searchParams.get("uuid") || parsed.searchParams.get("key");
+    const qUUID = parsed.searchParams.get("uuid") || parsed.searchParams.get("id");
+    const qTrojan = parsed.searchParams.get("trojan") || parsed.searchParams.get("pass") || parsed.searchParams.get("trojan_pass");
     const qProxyIP = parsed.searchParams.get("proxyip") || parsed.searchParams.get("ip");
     const qWSPath = parsed.searchParams.get("path") || parsed.searchParams.get("wspath");
 
-    if (qPwd) {
-        extractedPassword = qPwd.trim();
+    if (qUUID && isValidUUID(qUUID)) {
+        extractedUUID = qUUID.trim().toLowerCase();
+    }
+    if (qTrojan) {
+        extractedTrojanPass = qTrojan.trim();
     }
 
     if (pathSegments[0] === "sub") {
         isSubRequest = true;
-        if (pathSegments[1]) {
-            extractedPassword = pathSegments[1];
+        if (pathSegments[1] && isValidUUID(pathSegments[1])) {
+            extractedUUID = pathSegments[1].toLowerCase();
         }
-    } else if (pathSegments[0] && !["api", "sub", "health", "ping"].includes(pathSegments[0])) {
-        extractedPassword = pathSegments[0];
+    } else if (isValidUUID(pathSegments[0])) {
+        extractedUUID = pathSegments[0].toLowerCase();
         if (pathSegments[1] === "sub") {
             isSubRequest = true;
         } else if (pathSegments[1]) {
@@ -245,7 +239,8 @@ function extractDynamicConfig(url) {
     }
 
     return {
-        password: extractedPassword,
+        uuid: extractedUUID,
+        trojanPass: extractedTrojanPass || extractedUUID,
         proxyIP: qProxyIP ? qProxyIP.trim() : null,
         wsPath: qWSPath ? qWSPath.trim().replace(/^\/+/, "") : (extractedPath || null),
         isSubRequest
@@ -253,39 +248,55 @@ function extractDynamicConfig(url) {
 }
 
 // ============================================
-// Subscription / Config Generator (Trojan)
+// VLESS & Trojan Subscription / Config Generator
 // ============================================
-function generateTrojanConfigs(host, activePassword, activeWSPath, activeProxy) {
+function generateAllConfigs(host, activeUUID, activeTrojanPass, activeWSPath, activeProxy) {
     const cleanPath = (activeWSPath || DEFAULT_WS_PATH).replace(/^\/+/, "");
     const titleHost = host.replace(/[^a-zA-Z0-9.-]/g, "");
-    const encPass = encodeURIComponent(activePassword || DEFAULT_PASSWORD);
+    
+    // Trojan password defaults to UUID if not specified separately
+    const trojanKey = activeTrojanPass || activeUUID;
 
-    // 1. Trojan + TLS + WebSocket (Port 443)
-    const trojanTls = `trojan://${encPass}@${host}:443?security=tls&sni=${host}&type=ws&host=${host}&path=%2F${encodeURIComponent(cleanPath)}#Galaxy-Trojan-TLS%20(${titleHost})`;
-
-    // 2. Trojan + gRPC (Port 443)
-    const trojanGrpc = `trojan://${encPass}@${host}:443?security=tls&sni=${host}&type=grpc&serviceName=${encodeURIComponent(cleanPath)}#Galaxy-Trojan-gRPC%20(${titleHost})`;
-
-    // 3. Trojan + Direct WS (Port 80 Non-TLS)
-    const trojanHttp = `trojan://${encPass}@${host}:80?security=none&type=ws&host=${host}&path=%2F${encodeURIComponent(cleanPath)}#Galaxy-Trojan-HTTP%20(${titleHost})`;
-
-    // 4. Trojan + Proxy IP Node
-    let trojanProxy = "";
+    // 1. VLESS Configurations
+    const vlessTls = `vless://${activeUUID}@${host}:443?encryption=none&security=tls&sni=${host}&type=ws&host=${host}&path=%2F${encodeURIComponent(cleanPath)}%3Fed%3D2048#Galaxy-VLESS-TLS%20(${titleHost})`;
+    const vlessGrpc = `vless://${activeUUID}@${host}:443?encryption=none&security=tls&sni=${host}&type=grpc&serviceName=${encodeURIComponent(cleanPath)}#Galaxy-VLESS-gRPC%20(${titleHost})`;
+    const vlessHttp = `vless://${activeUUID}@${host}:80?encryption=none&security=none&type=ws&host=${host}&path=%2F${encodeURIComponent(cleanPath)}%3Fed%3D2048#Galaxy-VLESS-HTTP%20(${titleHost})`;
+    
+    let vlessProxy = "";
     if (activeProxy) {
-        trojanProxy = `trojan://${encPass}@${activeProxy}:443?security=tls&sni=${host}&type=ws&host=${host}&path=%2F${encodeURIComponent(cleanPath)}#Galaxy-Trojan-ProxyIP%20(${activeProxy})`;
+        vlessProxy = `vless://${activeUUID}@${activeProxy}:443?encryption=none&security=tls&sni=${host}&type=ws&host=${host}&path=%2F${encodeURIComponent(cleanPath)}%3Fed%3D2048#Galaxy-VLESS-ProxyIP%20(${activeProxy})`;
     }
 
-    const configs = [trojanTls, trojanGrpc, trojanHttp];
+    // 2. Trojan Configurations (Dual Compatibility with same UUID or Password)
+    const trojanTls = `trojan://${encodeURIComponent(trojanKey)}@${host}:443?security=tls&sni=${host}&type=ws&host=${host}&path=%2F${encodeURIComponent(cleanPath)}%3Fed%3D2048#Galaxy-Trojan-TLS%20(${titleHost})`;
+    const trojanGrpc = `trojan://${encodeURIComponent(trojanKey)}@${host}:443?security=tls&sni=${host}&type=grpc&serviceName=${encodeURIComponent(cleanPath)}#Galaxy-Trojan-gRPC%20(${titleHost})`;
+    
+    let trojanProxy = "";
+    if (activeProxy) {
+        trojanProxy = `trojan://${encodeURIComponent(trojanKey)}@${activeProxy}:443?security=tls&sni=${host}&type=ws&host=${host}&path=%2F${encodeURIComponent(cleanPath)}%3Fed%3D2048#Galaxy-Trojan-ProxyIP%20(${activeProxy})`;
+    }
+
+    const configs = [
+        vlessTls,
+        trojanTls,
+        vlessGrpc,
+        trojanGrpc,
+        vlessHttp
+    ];
+    if (vlessProxy) configs.push(vlessProxy);
     if (trojanProxy) configs.push(trojanProxy);
 
     return {
         plainList: configs.join("\n"),
         base64: btoa(unescape(encodeURIComponent(configs.join("\n")))),
         links: {
-            tls: trojanTls,
-            grpc: trojanGrpc,
-            http: trojanHttp,
-            proxy: trojanProxy
+            vlessTls,
+            vlessGrpc,
+            vlessHttp,
+            vlessProxy,
+            trojanTls,
+            trojanGrpc,
+            trojanProxy
         }
     };
 }
@@ -299,51 +310,66 @@ var worker_default = {
         const host = request.headers.get("Host") || url.host;
 
         // 1. Resolve Environment Variables
-        const envPassword = (env.PASSWORD || env.password || env.UUID || env.uuid || "").trim();
+        const envUUID = env.UUID || env.uuid;
+        const envTrojanPass = env.TROJAN_PASS || env.trojan_pass || env.TROJAN_PASSWORD || "";
+        const envPassword = (env.PASSWORD || env.password || "").trim();
         const maskPageEnabled = (env.MASK_PAGE !== "false" && env.MASK_PAGE !== false);
 
-        activeTrojanPassword = envPassword || DEFAULT_PASSWORD;
+        userID = envUUID && isValidUUID(envUUID) ? envUUID.trim().toLowerCase() : "";
+        trojanPassword = envTrojanPass ? envTrojanPass.trim() : (userID || "");
         proxyIP = env.PROXYIP || env.proxyip || env.PROXY_IP || DEFAULT_PROXY_IP;
-        githubProxyURL = env.PROXY_LIST_URL || DEFAULT_PROXY_URL;
-        dohURL = env.DNS_RESOLVER_URL || DEFAULT_DOH_URL;
+        activeProxyPool = [...DEFAULT_LOCAL_PROXIES];
+        dohURLs = normalizeDohURLs(env.DNS_RESOLVER_URL || env.DNS_RESOLVERS || DEFAULT_DOH_URLS);
         wsPath = (env.WS_PATH || DEFAULT_WS_PATH).replace(/^\/+/, "");
 
-        // 2. Dynamic Runtime Config extraction
+        // 2. Dynamic Runtime Config extraction from Request
         const dynConfig = extractDynamicConfig(request.url);
-        const runtimePassword = dynConfig.password || activeTrojanPassword;
+        const runtimeUUID = dynConfig.uuid || userID;
+        const runtimeTrojanPass = dynConfig.trojanPass || trojanPassword || runtimeUUID;
         const runtimeWSPath = dynConfig.wsPath || wsPath;
         const runtimeProxyIP = dynConfig.proxyIP || proxyIP;
 
-        // Build list of valid Trojan passwords & their SHA-224 hashes
-        const allowedPasswordList = Array.from(
+        // Build list of valid UUIDs & Trojan Passwords/Hashes
+        const allowedUUIDList = Array.from(
             new Set([
-                activeTrojanPassword,
-                runtimePassword,
-                ...(envPassword && envPassword.includes(",") ? envPassword.split(",").map(p => p.trim()) : [])
+                ...(userID && isValidUUID(userID) ? [userID] : []),
+                ...(dynConfig.uuid && isValidUUID(dynConfig.uuid) ? [dynConfig.uuid] : []),
+                ...(envUUID && envUUID.includes(",") ? envUUID.split(",").map(u => u.trim().toLowerCase()).filter(isValidUUID) : [])
             ])
         ).filter(Boolean);
 
-        const allowedSha224Hashes = allowedPasswordList.map(p => sha224(p).toLowerCase());
+        // Pre-compute Trojan SHA224 hashes for all allowed credentials (including UUIDs)
+        const allowedTrojanPassList = Array.from(
+            new Set([
+                ...(runtimeTrojanPass ? [runtimeTrojanPass] : []),
+                ...(trojanPassword ? [trojanPassword] : []),
+                ...allowedUUIDList,
+                ...(envPassword ? [envPassword] : [])
+            ])
+        ).filter(Boolean);
 
-        // 3. WebSocket proxy request (Trojan over WS)
+        const allowedTrojanHashes = allowedTrojanPassList.map(p => sha224(p).toLowerCase()).filter(Boolean);
+
+        // 3. WebSocket proxy request (VLESS + Trojan over WebSocket)
         const upgradeHeader = request.headers.get("Upgrade");
         if (upgradeHeader === "websocket") {
-            return await proxyOverWSHandler(request, allowedPasswordList, allowedSha224Hashes);
+            return await proxyOverWSHandler(request, allowedUUIDList, allowedTrojanHashes);
         }
 
-        // 4. gRPC HTTP/2 Stream proxy request (Trojan over gRPC)
+        // 4. gRPC HTTP/2 Stream proxy request (VLESS + Trojan over gRPC)
         const contentType = request.headers.get("Content-Type") || request.headers.get("content-type") || "";
         if (contentType.includes("application/grpc")) {
-            return await proxyOverGRPCHandler(request, allowedPasswordList, allowedSha224Hashes);
+            return await proxyOverGRPCHandler(request, allowedUUIDList, allowedTrojanHashes);
         }
 
         // 5. Auth Verification for Dashboard
         const cookieHeader = request.headers.get("Cookie") || "";
         const hasAuthCookie = cookieHeader.includes("galaxy_auth=1") || (envPassword && cookieHeader.includes(`galaxy_pwd=${encodeURIComponent(envPassword)}`));
         const qPwd = url.searchParams.get("pwd") || url.searchParams.get("password") || url.searchParams.get("key");
-        const isAuthorizedByPwd = (envPassword && qPwd === envPassword) || (qPwd && qPwd === runtimePassword);
+        const isAuthorizedByPwd = (envPassword && qPwd === envPassword) || (userID && qPwd === userID) || (runtimeTrojanPass && qPwd === runtimeTrojanPass);
+        const isAuthorizedByUuid = (dynConfig.uuid && isValidUUID(dynConfig.uuid));
         const pathSegments = url.pathname.split("/").filter(Boolean);
-        const isDirectPassPath = (pathSegments[0] && (pathSegments[0] === envPassword || pathSegments[0] === runtimePassword));
+        const isDirectUuidPath = (pathSegments[0] && isValidUUID(pathSegments[0]));
 
         // Login API endpoint
         if (url.pathname === "/api/login" && request.method === "POST") {
@@ -351,11 +377,12 @@ var worker_default = {
                 const body = await request.json().catch(() => ({}));
                 const submittedKey = (body.key || body.password || body.uuid || "").trim();
                 const isValidKey = (envPassword && submittedKey === envPassword) || 
-                                   (submittedKey && submittedKey === activeTrojanPassword) ||
-                                   (submittedKey.length >= 3);
+                                   (userID && submittedKey.toLowerCase() === userID.toLowerCase()) || 
+                                   (trojanPassword && submittedKey === trojanPassword) ||
+                                   isValidUUID(submittedKey);
 
                 if (isValidKey) {
-                    return new Response(JSON.stringify({ success: true, redirect: `/${encodeURIComponent(submittedKey)}` }), {
+                    return new Response(JSON.stringify({ success: true, redirect: isValidUUID(submittedKey) ? `/${submittedKey}` : `/?pwd=${encodeURIComponent(submittedKey)}` }), {
                         status: 200,
                         headers: {
                             "Content-Type": "application/json",
@@ -363,7 +390,7 @@ var worker_default = {
                         }
                     });
                 }
-                return new Response(JSON.stringify({ success: false, message: "Invalid Password or Key" }), {
+                return new Response(JSON.stringify({ success: false, message: "Invalid UUID or Password" }), {
                     status: 401,
                     headers: { "Content-Type": "application/json" }
                 });
@@ -383,21 +410,21 @@ var worker_default = {
             });
         }
 
-        // 6. Subscription Link Endpoint (/sub or /<password>/sub or ?sub=1)
+        // 6. Subscription Link Endpoint (/sub or /<UUID>/sub or ?sub=1)
         if (dynConfig.isSubRequest || url.pathname === "/sub" || url.searchParams.has("sub")) {
-            const subData = generateTrojanConfigs(host, runtimePassword, runtimeWSPath, runtimeProxyIP);
+            const subData = generateAllConfigs(host, runtimeUUID, runtimeTrojanPass, runtimeWSPath, runtimeProxyIP);
             
             const acceptHeader = request.headers.get("Accept") || "";
             if (acceptHeader.includes("text/html") && !url.searchParams.has("raw")) {
-                if (isDirectPassPath || isAuthorizedByPwd || hasAuthCookie || !maskPageEnabled) {
-                    return new Response(getGalaxyPage(host, runtimePassword, runtimeWSPath, runtimeProxyIP, subData), {
+                if (isDirectUuidPath || isAuthorizedByUuid || isAuthorizedByPwd || hasAuthCookie || !maskPageEnabled) {
+                    return new Response(getGalaxyPage(host, runtimeUUID, runtimeTrojanPass, runtimeWSPath, runtimeProxyIP, subData), {
                         status: 200,
                         headers: { "Content-Type": "text/html; charset=utf-8" }
                     });
                 }
             }
 
-            // Raw Base64 for Trojan Clients (v2rayNG, Sing-box, Shadowrocket, NekoBox, etc.)
+            // Raw Base64 for V2Ray / Shadowrocket / Sing-Box / Clash subscriptions
             return new Response(subData.base64, {
                 status: 200,
                 headers: {
@@ -409,12 +436,12 @@ var worker_default = {
             });
         }
 
-        // 7. API Health & Edge Diagnostics Endpoint
+        // 7. API Health & Edge Status Endpoint
         if (url.pathname === "/api/health" || url.pathname === "/api/ping") {
             return new Response(JSON.stringify({
                 status: "healthy",
-                protocol: "Trojan",
-                edge: "Cloudflare Anycast Edge",
+                protocols: ["VLESS", "Trojan"],
+                edge: "Cloudflare Anycast",
                 colo: request.cf?.colo || "EDGE",
                 country: request.cf?.country || "US",
                 clientIp: request.headers.get("CF-Connecting-IP") || "127.0.0.1",
@@ -425,24 +452,24 @@ var worker_default = {
             });
         }
 
-        // 8. Decide whether to render Camouflage Mask Page or Trojan Dashboard
-        const isAuthorizedToViewDashboard = !maskPageEnabled || isDirectPassPath || isAuthorizedByPwd || hasAuthCookie;
+        // 8. Decide whether to render Camouflage Mask Page or Galaxy Dashboard
+        const isAuthorizedToViewDashboard = !maskPageEnabled || isDirectUuidPath || isAuthorizedByUuid || isAuthorizedByPwd || hasAuthCookie;
 
         if (isAuthorizedToViewDashboard) {
-            const subData = generateTrojanConfigs(host, runtimePassword, runtimeWSPath, runtimeProxyIP);
-            return new Response(getGalaxyPage(host, runtimePassword, runtimeWSPath, runtimeProxyIP, subData), {
+            const subData = generateAllConfigs(host, runtimeUUID, runtimeTrojanPass, runtimeWSPath, runtimeProxyIP);
+            return new Response(getGalaxyPage(host, runtimeUUID, runtimeTrojanPass, runtimeWSPath, runtimeProxyIP, subData), {
                 status: 200,
                 headers: {
                     "Content-Type": "text/html; charset=utf-8",
-                    ...(qPwd || isDirectPassPath ? { "Set-Cookie": "galaxy_auth=1; Path=/; Max-Age=86400; SameSite=Lax" } : {})
+                    ...(qPwd || isAuthorizedByUuid ? { "Set-Cookie": "galaxy_auth=1; Path=/; Max-Age=86400; SameSite=Lax" } : {})
                 }
             });
         }
 
-        // 9. Default Public Visitors -> Render Camouflage Mask Website
+        // 9. Default Public Visitors / ISPs -> Render Camouflage Mask Website
         const clientIp = request.headers.get("CF-Connecting-IP") || "127.0.0.1";
         const colo = request.cf?.colo || "EDGE-GLOBAL";
-        return new Response(getMaskPage(host, Boolean(envPassword), clientIp, colo), {
+        return new Response(getMaskPage(host, Boolean(envPassword || userID), clientIp, colo), {
             status: 200,
             headers: { "Content-Type": "text/html; charset=utf-8" }
         });
@@ -450,106 +477,161 @@ var worker_default = {
 };
 
 // ============================================
-// Trojan Header Parser
+// Dual Protocol Header Parser (VLESS & Trojan)
 // ============================================
-function processTrojanHeader(buffer, allowedPasswords, allowedSha224Hashes) {
-    // Trojan header minimum: 56 bytes hex + 2 bytes CRLF + 1 byte CMD + 1 byte ATYP + addr + 2 bytes port + 2 bytes CRLF
-    if (buffer.byteLength < 62) {
-        return { hasError: true, message: "Invalid Trojan packet: buffer too short" };
+function processProxyHeader(buffer, allowedUUIDs, allowedTrojanHashes) {
+    if (!buffer || buffer.byteLength < 24) {
+        return { hasError: true, message: "Invalid payload data (too short)" };
     }
 
     const uint8 = new Uint8Array(buffer);
 
-    // 1. Extract 56-byte SHA-224 Hex Hash
-    const incomingHex = new TextDecoder().decode(uint8.subarray(0, 56)).toLowerCase().trim();
+    // ----------------------------------------------------
+    // CHECK 1: Trojan Protocol
+    // Trojan client sends: 56 hex bytes (sha224) + \r\n (0x0D, 0x0A) + CMD (1 byte) + ADDR TYPE + ...
+    // ----------------------------------------------------
+    if (uint8.byteLength >= 58 && uint8[56] === 0x0D && uint8[57] === 0x0A) {
+        const hexHash = new TextDecoder().decode(uint8.slice(0, 56)).toLowerCase().trim();
+        const isValidTrojan = allowedTrojanHashes.some(h => h && h === hexHash);
 
-    // Verify hash against allowed password hashes or allow dynamic verification
-    const isValidHash = allowedSha224Hashes.includes(incomingHex) || 
-                        allowedPasswords.some(p => sha224(p).toLowerCase() === incomingHex || p.toLowerCase() === incomingHex);
-
-    if (!isValidHash) {
-        // Also allow if any configured password sha224 matches
-        const fallbackCheck = allowedPasswords.some(p => sha224(p) === incomingHex);
-        if (!fallbackCheck) {
-            return { hasError: true, message: `Trojan Authentication Failed: Hash (${incomingHex.substring(0, 12)}...) unauthorized` };
+        if (!isValidTrojan) {
+            return { hasError: true, message: `Invalid Trojan credential hash` };
         }
+
+        const command = uint8[58];
+        let isUDP = false;
+        if (command === 1) {
+            isUDP = false; // TCP Connect
+        } else if (command === 3) {
+            isUDP = true;  // UDP Associate
+        } else {
+            return { hasError: true, message: `Trojan command ${command} not supported` };
+        }
+
+        const addressType = uint8[59];
+        let addressLength = 0;
+        let addressValueIndex = 60;
+        let addressValue = "";
+
+        switch (addressType) {
+            case 1: // IPv4
+                addressLength = 4;
+                addressValue = new Uint8Array(uint8.slice(addressValueIndex, addressValueIndex + addressLength)).join(".");
+                break;
+            case 3: // Domain
+                addressLength = uint8[addressValueIndex];
+                addressValueIndex += 1;
+                addressValue = new TextDecoder().decode(uint8.slice(addressValueIndex, addressValueIndex + addressLength));
+                break;
+            case 4: // IPv6
+                addressLength = 16;
+                const dataView = new DataView(uint8.buffer, uint8.byteOffset + addressValueIndex, addressLength);
+                const ipv6 = [];
+                for (let i = 0; i < 8; i++) {
+                    ipv6.push(dataView.getUint16(i * 2).toString(16));
+                }
+                addressValue = ipv6.join(":");
+                break;
+            default:
+                return { hasError: true, message: `Invalid Trojan address type ${addressType}` };
+        }
+
+        const portIndex = addressValueIndex + addressLength;
+        const portRemote = new DataView(uint8.buffer, uint8.byteOffset + portIndex, 2).getUint16(0);
+
+        // Trojan header ends with CRLF (\r\n) at (portIndex + 2)
+        const rawDataIndex = portIndex + 2 + 2;
+
+        return {
+            hasError: false,
+            protocol: "trojan",
+            addressRemote: addressValue,
+            addressType,
+            portRemote,
+            rawDataIndex,
+            responseHeader: null, // Trojan has no response header on TCP handshake
+            isUDP
+        };
     }
 
-    // 2. Check CRLF after 56-byte hash (bytes 56 and 57)
-    if (uint8[56] !== 0x0D || uint8[57] !== 0x0A) {
-        return { hasError: true, message: "Invalid Trojan packet: missing hash CRLF delimiter" };
+    // ----------------------------------------------------
+    // CHECK 2: VLESS Protocol
+    // ----------------------------------------------------
+    const version = uint8[0];
+    const slicedBuffer = uint8.slice(1, 17);
+    const slicedBufferString = unsafeStringify(slicedBuffer);
+
+    const validList = Array.isArray(allowedUUIDs) ? allowedUUIDs : [allowedUUIDs];
+    const isValidUser = validList.some((userUuid) => userUuid && slicedBufferString === userUuid.trim().toLowerCase());
+
+    if (!isValidUser) {
+        return { hasError: true, message: `Invalid VLESS user (${slicedBufferString})` };
     }
 
-    // 3. Command byte (byte 58)
-    // 0x01 = CONNECT (TCP), 0x03 = UDP ASSOCIATE
-    const command = uint8[58];
-    const isUDP = (command === 0x03);
-    if (command !== 0x01 && command !== 0x03) {
-        return { hasError: true, message: `Unsupported Trojan command: ${command}` };
+    const optLength = uint8[17];
+    const command = uint8[18 + optLength];
+
+    let isUDP = false;
+    if (command === 1) {
+        isUDP = false;
+    } else if (command === 2) {
+        isUDP = true;
+    } else {
+        return { hasError: true, message: `VLESS command ${command} not supported` };
     }
 
-    // 4. Address Type (ATYP) (byte 59)
-    const addressType = uint8[59];
+    const portIndex = 18 + optLength + 1;
+    const portRemote = new DataView(uint8.buffer, uint8.byteOffset + portIndex, 2).getUint16(0);
+
+    let addressIndex = portIndex + 2;
+    const addressType = uint8[addressIndex];
+
     let addressLength = 0;
-    let addressValueIndex = 60;
+    let addressValueIndex = addressIndex + 1;
     let addressValue = "";
 
     switch (addressType) {
-        case 1: // IPv4 (4 bytes)
+        case 1:
             addressLength = 4;
-            addressValue = Array.from(uint8.subarray(addressValueIndex, addressValueIndex + 4)).join(".");
+            addressValue = new Uint8Array(uint8.slice(addressValueIndex, addressValueIndex + addressLength)).join(".");
             break;
-        case 3: // Domain (1-byte length + ASCII bytes)
+        case 2:
             addressLength = uint8[addressValueIndex];
             addressValueIndex += 1;
-            addressValue = new TextDecoder().decode(uint8.subarray(addressValueIndex, addressValueIndex + addressLength));
+            addressValue = new TextDecoder().decode(uint8.slice(addressValueIndex, addressValueIndex + addressLength));
             break;
-        case 4: // IPv6 (16 bytes)
+        case 3:
             addressLength = 16;
-            const dataView = new DataView(buffer, addressValueIndex, 16);
-            const parts = [];
+            const dataView = new DataView(uint8.buffer, uint8.byteOffset + addressValueIndex, addressLength);
+            const ipv6 = [];
             for (let i = 0; i < 8; i++) {
-                parts.push(dataView.getUint16(i * 2).toString(16));
+                ipv6.push(dataView.getUint16(i * 2).toString(16));
             }
-            addressValue = parts.join(":");
+            addressValue = ipv6.join(":");
             break;
         default:
-            return { hasError: true, message: `Invalid Trojan address type: ${addressType}` };
+            return { hasError: true, message: `Invalid VLESS address type ${addressType}` };
     }
 
     if (!addressValue) {
-        return { hasError: true, message: "Trojan target address is empty" };
+        return { hasError: true, message: "VLESS address value is empty" };
     }
 
-    // 5. Port (2 bytes Big-Endian)
-    const portIndex = addressValueIndex + addressLength;
-    if (buffer.byteLength < portIndex + 4) {
-        return { hasError: true, message: "Trojan packet truncated before port/payload" };
-    }
-
-    const portDataView = new DataView(buffer, portIndex, 2);
-    const portRemote = portDataView.getUint16(0);
-
-    // 6. Check closing CRLF (2 bytes after port)
-    const crlfIndex = portIndex + 2;
-    if (uint8[crlfIndex] !== 0x0D || uint8[crlfIndex + 1] !== 0x0A) {
-        // Some implementations skip or have single byte; accept if payload follows
-    }
-
-    const rawDataIndex = crlfIndex + 2;
-
+    const responseHeader = new Uint8Array([version, 0]);
     return {
         hasError: false,
+        protocol: "vless",
         addressRemote: addressValue,
         addressType,
         portRemote,
-        rawDataIndex,
+        rawDataIndex: addressValueIndex + addressLength,
+        responseHeader,
         isUDP
     };
 }
 
 // ============================================
-// gRPC HTTP/2 Stream Proxy Handler (Trojan)
+// gRPC HTTP/2 Stream Proxy Handler
 // ============================================
 function makeGrpcFrame(data) {
     const rawBytes = data instanceof Uint8Array 
@@ -566,7 +648,7 @@ function makeGrpcFrame(data) {
     return frame;
 }
 
-async function proxyOverGRPCHandler(request, allowedPasswords, allowedSha224Hashes) {
+async function proxyOverGRPCHandler(request, allowedUUIDs, allowedTrojanHashes) {
     const { readable, writable } = new TransformStream();
     const writer = writable.getWriter();
 
@@ -574,10 +656,12 @@ async function proxyOverGRPCHandler(request, allowedPasswords, allowedSha224Hash
     let portWithRandomLog = "";
 
     const log = (info, event) => {
-        console.log(`[Trojan-gRPC][${address}:${portWithRandomLog}] ${info}`, event || "");
+        console.log(`[gRPC][${address}:${portWithRandomLog}] ${info}`, event || "");
     };
 
     let remoteSocketWrapper = { value: null };
+    let udpStreamWrite = null;
+    let isDns = false;
     let accumulatedBuffer = new Uint8Array(0);
 
     const grpcClient = {
@@ -587,11 +671,13 @@ async function proxyOverGRPCHandler(request, allowedPasswords, allowedSha224Hash
                 const framed = makeGrpcFrame(data);
                 await writer.write(framed);
             } catch (err) {
-                log("gRPC write error", err);
+                log("gRPC send error", err);
             }
         },
         close: async () => {
-            try { await writer.close(); } catch (err) {}
+            try {
+                await writer.close();
+            } catch (err) {}
         }
     };
 
@@ -600,47 +686,84 @@ async function proxyOverGRPCHandler(request, allowedPasswords, allowedSha224Hash
         try {
             while (true) {
                 const { done, value } = await reader.read();
-                if (done) break;
+                if (done) {
+                    log("gRPC body stream finished");
+                    break;
+                }
                 if (!value || value.byteLength === 0) continue;
 
-                if (remoteSocketWrapper.value) {
-                    const socketWriter = remoteSocketWrapper.value.writable.getWriter();
-                    await socketWriter.write(value);
-                    socketWriter.releaseLock();
+                if (isDns && udpStreamWrite) {
+                    await udpStreamWrite(value);
                     continue;
                 }
 
-                // Append incoming stream chunk
-                const merged = new Uint8Array(accumulatedBuffer.length + value.length);
-                merged.set(accumulatedBuffer, 0);
-                merged.set(value, accumulatedBuffer.length);
-                accumulatedBuffer = merged;
-
-                // gRPC unframe if needed
-                let payload = accumulatedBuffer;
-                if (accumulatedBuffer.length >= 5 && accumulatedBuffer[0] === 0) {
-                    const length = (accumulatedBuffer[1] << 24) | (accumulatedBuffer[2] << 16) | (accumulatedBuffer[3] << 8) | accumulatedBuffer[4];
-                    if (accumulatedBuffer.length >= 5 + length) {
-                        payload = accumulatedBuffer.subarray(5, 5 + length);
-                    }
+                if (remoteSocketWrapper.value) {
+                    const tcpWriter = remoteSocketWrapper.value.writable.getWriter();
+                    await tcpWriter.write(value);
+                    tcpWriter.releaseLock();
+                    continue;
                 }
 
-                if (payload.byteLength < 62) continue;
+                const combined = new Uint8Array(accumulatedBuffer.length + value.length);
+                combined.set(accumulatedBuffer, 0);
+                combined.set(value, accumulatedBuffer.length);
+                accumulatedBuffer = combined;
 
-                const result = processTrojanHeader(payload.buffer, allowedPasswords, allowedSha224Hashes);
+                let payload = null;
+                if (accumulatedBuffer.length >= 5 && accumulatedBuffer[0] === 0) {
+                    const msgLen = (accumulatedBuffer[1] << 24) | (accumulatedBuffer[2] << 16) | (accumulatedBuffer[3] << 8) | accumulatedBuffer[4];
+                    if (accumulatedBuffer.length >= 5 + msgLen) {
+                        payload = accumulatedBuffer.slice(5, 5 + msgLen);
+                        accumulatedBuffer = accumulatedBuffer.slice(5 + msgLen);
+                    }
+                } else if (accumulatedBuffer.length >= 24) {
+                    payload = accumulatedBuffer;
+                    accumulatedBuffer = new Uint8Array(0);
+                }
+
+                if (!payload || payload.length < 24) {
+                    continue;
+                }
+
+                const result = processProxyHeader(payload, allowedUUIDs, allowedTrojanHashes);
                 if (result.hasError) {
                     throw new Error(result.message);
                 }
 
-                const { addressRemote, portRemote, rawDataIndex, isUDP } = result;
+                const {
+                    addressRemote = "",
+                    portRemote = 443,
+                    rawDataIndex,
+                    responseHeader,
+                    isUDP,
+                    protocol
+                } = result;
+
                 address = addressRemote;
-                portWithRandomLog = `${portRemote} ${isUDP ? "udp" : "tcp"}`;
+                portWithRandomLog = `${portRemote} ${isUDP ? "udp" : "tcp"} (${protocol})`;
+
+                if (isUDP && portRemote !== 53) {
+                    throw new Error("UDP proxy only enabled for DNS (port 53)");
+                }
+                if (isUDP && portRemote === 53) {
+                    isDns = true;
+                }
 
                 const rawClientData = payload.slice(rawDataIndex);
-                handleTCPOutBound(remoteSocketWrapper, addressRemote, portRemote, rawClientData, grpcClient, null, log);
+
+                if (isDns) {
+                    const { write } = await handleUDPOutBound(grpcClient, responseHeader, log);
+                    udpStreamWrite = write;
+                    if (rawClientData.length > 0) {
+                        await udpStreamWrite(rawClientData);
+                    }
+                    continue;
+                }
+
+                handleTCPOutBound(remoteSocketWrapper, addressRemote, portRemote, rawClientData, grpcClient, responseHeader, log);
             }
         } catch (err) {
-            log("gRPC stream processing error", err);
+            log("gRPC processing error", err);
         } finally {
             safeCloseClient(grpcClient);
         }
@@ -656,9 +779,9 @@ async function proxyOverGRPCHandler(request, allowedPasswords, allowedSha224Hash
 }
 
 // ============================================
-// WebSocket Proxy Handler (Trojan)
+// WebSocket Proxy Handler
 // ============================================
-async function proxyOverWSHandler(request, allowedPasswords, allowedSha224Hashes) {
+async function proxyOverWSHandler(request, allowedUUIDs, allowedTrojanHashes) {
     const webSocketPair = new WebSocketPair();
     const [client, webSocket] = Object.values(webSocketPair);
     webSocket.accept();
@@ -667,16 +790,21 @@ async function proxyOverWSHandler(request, allowedPasswords, allowedSha224Hashes
     let portWithRandomLog = "";
 
     const log = (info, event) => {
-        console.log(`[Trojan-WS][${address}:${portWithRandomLog}] ${info}`, event || "");
+        console.log(`[WS][${address}:${portWithRandomLog}] ${info}`, event || "");
     };
 
     const earlyDataHeader = request.headers.get("sec-websocket-protocol") || "";
     const readableWebSocketStream = makeReadableWebSocketStream(webSocket, earlyDataHeader, log);
 
     let remoteSocketWrapper = { value: null };
+    let udpStreamWrite = null;
+    let isDns = false;
 
     readableWebSocketStream.pipeTo(new WritableStream({
         async write(chunk, controller) {
+            if (isDns && udpStreamWrite) {
+                return udpStreamWrite(chunk);
+            }
             if (remoteSocketWrapper.value) {
                 const writer = remoteSocketWrapper.value.writable.getWriter();
                 await writer.write(chunk);
@@ -684,7 +812,7 @@ async function proxyOverWSHandler(request, allowedPasswords, allowedSha224Hashes
                 return;
             }
 
-            const result = processTrojanHeader(chunk, allowedPasswords, allowedSha224Hashes);
+            let result = processProxyHeader(chunk, allowedUUIDs, allowedTrojanHashes);
 
             if (result.hasError) {
                 throw new Error(result.message);
@@ -694,71 +822,89 @@ async function proxyOverWSHandler(request, allowedPasswords, allowedSha224Hashes
                 addressRemote = "",
                 portRemote = 443,
                 rawDataIndex,
-                isUDP
+                responseHeader,
+                isUDP,
+                protocol
             } = result;
 
             address = addressRemote;
-            portWithRandomLog = `${portRemote} ${isUDP ? "udp" : "tcp"}`;
+            portWithRandomLog = `${portRemote} ${isUDP ? "udp" : "tcp"} (${protocol})`;
+
+            if (isUDP && portRemote !== 53) {
+                throw new Error("UDP proxy only enabled for DNS (port 53)");
+            }
+            if (isUDP && portRemote === 53) {
+                isDns = true;
+            }
 
             const rawClientData = chunk.slice(rawDataIndex);
-            handleTCPOutBound(remoteSocketWrapper, addressRemote, portRemote, rawClientData, webSocket, null, log);
+
+            if (isDns) {
+                const { write } = await handleUDPOutBound(webSocket, responseHeader, log);
+                udpStreamWrite = write;
+                udpStreamWrite(rawClientData);
+                return;
+            }
+
+            handleTCPOutBound(remoteSocketWrapper, addressRemote, portRemote, rawClientData, webSocket, responseHeader, log);
         },
         close() {
-            log("WebSocket connection closed");
+            log("WebSocket stream closed");
         },
         abort(reason) {
             log("WebSocket stream aborted", JSON.stringify(reason));
         }
     })).catch((err) => {
-        log("WebSocket stream error", err);
+        log("WebSocket pipeTo error", err);
     });
 
     return new Response(null, { status: 101, webSocket: client });
 }
 
 // ============================================
-// TCP Outbound with AdBlock & Hybrid Proxy Fallback
+// TCP Outbound with AdBlock & Direct Bypass
 // ============================================
 async function handleTCPOutBound(remoteSocket, addressRemote, portRemote, rawClientData, client, responseHeader, log) {
     if (isAdDomain(addressRemote)) {
-        log(`[AdBlock] Blocked connection to ad domain: ${addressRemote}`);
+        log(`[AdBlock] Blocked outbound connection to ad domain: ${addressRemote}`);
         safeCloseClient(client);
         return;
     }
 
     const isDirect = isPrivateOrLocalAddress(addressRemote);
     if (isDirect) {
-        log(`[DirectBypass] Local route for ${addressRemote}:${portRemote}`);
+        log(`[DirectBypass] Local/private route detected for ${addressRemote}:${portRemote}.`);
     }
 
     async function connectAndWrite(address, port) {
-        const tcpSocket = connect({ hostname: address, port });
-        remoteSocket.value = tcpSocket;
-        log(`Connected to target ${address}:${port}`);
-        const writer = tcpSocket.writable.getWriter();
+        const tcpSocket2 = connect({ hostname: address, port });
+        remoteSocket.value = tcpSocket2;
+        log(`Connected to ${address}:${port}`);
+        const writer = tcpSocket2.writable.getWriter();
         await writer.write(rawClientData);
         writer.releaseLock();
-        return tcpSocket;
+        return tcpSocket2;
     }
 
     async function retry() {
         if (isDirect) {
+            log(`[DirectBypass] Target connection failed, direct route will not fallback to external proxy.`);
             safeCloseClient(client);
             return;
         }
 
-        const activeProxy = await getHybridProxyIP(proxyIP, githubProxyURL);
+        const activeProxy = getLocalProxyIP(proxyIP);
         const target = activeProxy || addressRemote;
         log(`Retrying connection via Hybrid ProxyIP: ${target}`);
         
         try {
             const tcpSocket2 = await connectAndWrite(target, portRemote);
             tcpSocket2.closed.catch((error) => {
-                console.log("Retry socket closed", error);
+                console.log("Retry tcpSocket closed error", error);
             }).finally(() => {
                 safeCloseClient(client);
             });
-            remoteSocketToClient(tcpSocket2, client, null, null, log);
+            remoteSocketToClient(tcpSocket2, client, responseHeader, null, log);
         } catch (err) {
             log("Retry connect error", err);
             safeCloseClient(client);
@@ -767,7 +913,7 @@ async function handleTCPOutBound(remoteSocket, addressRemote, portRemote, rawCli
 
     try {
         const tcpSocket = await connectAndWrite(addressRemote, portRemote);
-        remoteSocketToClient(tcpSocket, client, null, isDirect ? null : retry, log);
+        remoteSocketToClient(tcpSocket, client, responseHeader, isDirect ? null : retry, log);
     } catch (err) {
         log("Initial TCP connect error", err);
         if (!isDirect) {
@@ -789,7 +935,7 @@ function makeReadableWebSocketStream(webSocketServer, earlyDataHeader, log) {
                 controller.close();
             });
             webSocketServer.addEventListener("error", (err) => {
-                log("WebSocket stream error");
+                log("WebSocket error");
                 controller.error(err);
             });
 
@@ -808,22 +954,36 @@ function makeReadableWebSocketStream(webSocketServer, earlyDataHeader, log) {
 }
 
 async function remoteSocketToClient(remoteSocket, client, responseHeader, retry, log) {
+    let header = responseHeader;
     let hasIncomingData = false;
 
     await remoteSocket.readable.pipeTo(new WritableStream({
         async write(chunk, controller) {
             hasIncomingData = true;
             if (client.isGrpc) {
-                await client.send(chunk);
+                if (header) {
+                    const combined = new Uint8Array(header.length + chunk.byteLength);
+                    combined.set(header, 0);
+                    combined.set(new Uint8Array(chunk.buffer || chunk, chunk.byteOffset || 0, chunk.byteLength), header.length);
+                    await client.send(combined);
+                    header = null;
+                } else {
+                    await client.send(chunk);
+                }
             } else {
                 if (client.readyState !== 1) {
                     controller.error("WebSocket not open");
                 }
-                client.send(chunk);
+                if (header) {
+                    client.send(await new Blob([header, chunk]).arrayBuffer());
+                    header = null;
+                } else {
+                    client.send(chunk);
+                }
             }
         },
         close() {
-            log(`Remote stream closed (had data: ${hasIncomingData})`);
+            log(`Remote connection closed (had data: ${hasIncomingData})`);
         },
         abort(reason) {
             console.error("Remote readable abort", reason);
@@ -834,13 +994,15 @@ async function remoteSocketToClient(remoteSocket, client, responseHeader, retry,
     });
 
     if (hasIncomingData === false && retry) {
-        log("Retrying connection via proxy pool...");
+        log("Retrying connection...");
         retry();
     }
 }
 
 function base64ToArrayBuffer(base64Str) {
-    if (!base64Str) return { earlyData: null, error: null };
+    if (!base64Str) {
+        return { earlyData: null, error: null };
+    }
     try {
         base64Str = base64Str.replace(/-/g, "+").replace(/_/g, "/");
         const decode = atob(base64Str);
@@ -851,34 +1013,127 @@ function base64ToArrayBuffer(base64Str) {
     }
 }
 
+var byteToHex = [];
+for (let i = 0; i < 256; ++i) {
+    byteToHex.push((i + 256).toString(16).slice(1));
+}
+
+function unsafeStringify(arr, offset = 0) {
+    return (
+        byteToHex[arr[offset + 0]] +
+        byteToHex[arr[offset + 1]] +
+        byteToHex[arr[offset + 2]] +
+        byteToHex[arr[offset + 3]] +
+        "-" +
+        byteToHex[arr[offset + 4]] +
+        byteToHex[arr[offset + 5]] +
+        "-" +
+        byteToHex[arr[offset + 6]] +
+        byteToHex[arr[offset + 7]] +
+        "-" +
+        byteToHex[arr[offset + 8]] +
+        byteToHex[arr[offset + 9]] +
+        "-" +
+        byteToHex[arr[offset + 10]] +
+        byteToHex[arr[offset + 11]] +
+        byteToHex[arr[offset + 12]] +
+        byteToHex[arr[offset + 13]] +
+        byteToHex[arr[offset + 14]] +
+        byteToHex[arr[offset + 15]]
+    ).toLowerCase();
+}
+
+function safeCloseWebSocket(socket) {
+    try {
+        if (socket.readyState === 1 || socket.readyState === 2) {
+            socket.close();
+        }
+    } catch (error) {
+        console.error("safeCloseWebSocket error", error);
+    }
+}
+
 function safeCloseClient(client) {
+    if (!client) return;
     try {
-        if (client.isGrpc) {
+        if (client.isGrpc && client.close) {
             client.close();
-        } else {
-            safeCloseWebSocket(client);
+        } else if (client.readyState === 1 || client.readyState === 2) {
+            client.close();
         }
-    } catch (e) {}
+    } catch (error) {
+        console.error("safeCloseClient error", error);
+    }
 }
 
-function safeCloseWebSocket(ws) {
-    try {
-        if (ws.readyState === 1 || ws.readyState === 0) {
-            ws.close();
+async function handleUDPOutBound(client, responseHeader, log) {
+    let isHeaderSent = false;
+    const transformStream = new TransformStream({
+        transform(chunk, controller) {
+            for (let index = 0; index < chunk.byteLength; ) {
+                const lengthBuffer = chunk.slice(index, index + 2);
+                const udpPacketLength = new DataView(lengthBuffer).getUint16(0);
+                const udpData = new Uint8Array(chunk.slice(index + 2, index + 2 + udpPacketLength));
+                index = index + 2 + udpPacketLength;
+                controller.enqueue(udpData);
+            }
+        },
+        flush(controller) {}
+    });
+
+    transformStream.readable.pipeTo(new WritableStream({
+        async write(chunk) {
+            let lastError = null;
+            for (const dohURL of dohURLs) {
+                try {
+                    const resp = await fetch(dohURL, {
+                        method: "POST",
+                        headers: { "content-type": "application/dns-message", "accept": "application/dns-message" },
+                        body: chunk,
+                        cf: { cacheTtl: 0, cacheEverything: false }
+                    });
+                    if (!resp.ok) throw new Error(`DoH ${resp.status}`);
+
+                    const dnsQueryResult = await resp.arrayBuffer();
+                    const udpSize = dnsQueryResult.byteLength;
+                    const udpSizeBuffer = new Uint8Array([udpSize >> 8 & 255, udpSize & 255]);
+                    const fullPacket = isHeaderSent || !responseHeader
+                        ? new Uint8Array([...udpSizeBuffer, ...new Uint8Array(dnsQueryResult)])
+                        : new Uint8Array([...responseHeader, ...udpSizeBuffer, ...new Uint8Array(dnsQueryResult)]);
+                    isHeaderSent = true;
+
+                    log(`DoH success via ${dohURL}, DNS message length: ${udpSize}`);
+                    if (client.isGrpc) {
+                        await client.send(fullPacket);
+                    } else if (client.readyState === 1) {
+                        client.send(fullPacket.buffer);
+                    }
+                    return;
+                } catch (error) {
+                    lastError = error;
+                    log(`DoH failed via ${dohURL}: ${error.message}`);
+                }
+            }
+            throw lastError || new Error("All DoH providers failed");
         }
-    } catch (e) {}
+    })).catch((error) => {
+        log("DNS UDP error" + error);
+    });
+
+    const writer = transformStream.writable.getWriter();
+    return { write: (chunk) => writer.write(chunk) };
 }
 
 // ============================================
-// Camouflage Mask Page (Public Clean disguise)
+// CAMOUFLAGE MASK WEBSITE (EDGE DIAGNOSTICS)
 // ============================================
-function getMaskPage(host = "localhost", isAuthEnabled = true, clientIp = "127.0.0.1", colo = "EDGE-GLOBAL") {
+function getMaskPage(host = "localhost", isAuthEnabled = true, clientIp = "127.0.0.1", colo = "EDGE-LOCAL") {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Galaxy Edge Gateway | Anycast Telemetry &amp; Health</title>
+  <title>EdgeTunnel Cloud | Edge Network & Diagnostics</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -892,7 +1147,7 @@ function getMaskPage(host = "localhost", isAuthEnabled = true, clientIp = "127.0
     header {
       background: #ffffff;
       border-bottom: 1px solid #e2e8f0;
-      padding: 14px 24px;
+      padding: 14px 20px;
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -903,17 +1158,18 @@ function getMaskPage(host = "localhost", isAuthEnabled = true, clientIp = "127.0
     .logo-area {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
       font-weight: 800;
       font-size: 17px;
-      color: #0f172a;
+      color: #000000;
       cursor: pointer;
       user-select: none;
+      line-height: 1.15;
     }
     .logo-icon {
-      width: 34px;
-      height: 34px;
-      background: #0f172a;
+      width: 32px;
+      height: 32px;
+      background: #000000;
       border-radius: 8px;
       display: flex;
       align-items: center;
@@ -931,7 +1187,7 @@ function getMaskPage(host = "localhost", isAuthEnabled = true, clientIp = "127.0
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      background: #0f172a;
+      background: #000000;
       padding: 6px 14px;
       border-radius: 9999px;
       font-size: 11px;
@@ -941,44 +1197,42 @@ function getMaskPage(host = "localhost", isAuthEnabled = true, clientIp = "127.0
     }
     .btn-portal {
       background: transparent;
-      border: 1px solid #cbd5e1;
-      color: #0f172a;
-      padding: 6px 12px;
+      border: none;
+      color: #000000;
+      padding: 4px 8px;
       font-size: 12px;
       font-weight: 700;
-      border-radius: 6px;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
-      gap: 5px;
-      transition: all 0.2s;
+      gap: 4px;
+      transition: opacity 0.2s;
     }
     .btn-portal:hover {
-      background: #0f172a;
-      color: #ffffff;
+      opacity: 0.7;
     }
     main {
       flex: 1;
       max-width: 960px;
       width: 100%;
       margin: 0 auto;
-      padding: 32px 16px;
+      padding: 24px 16px;
       display: flex;
       flex-direction: column;
-      gap: 24px;
+      gap: 20px;
     }
     .hero-card {
-      background: #ffffff;
+      background: linear-gradient(180deg, #ecfdf5 0%, #ffffff 40%);
       border: 1px solid #e2e8f0;
       border-radius: 16px;
-      padding: 28px;
+      padding: 24px;
       box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.03);
       position: relative;
     }
-    .hero-badge {
+    .hero-top-badge {
       position: absolute;
-      top: 28px;
-      right: 28px;
+      top: 24px;
+      right: 24px;
       background: #dcfce7;
       border: 1px solid #bbf7d0;
       color: #166534;
@@ -988,65 +1242,112 @@ function getMaskPage(host = "localhost", isAuthEnabled = true, clientIp = "127.0
       border-radius: 9999px;
     }
     .hero-title {
-      font-size: 24px;
+      font-size: 23px;
       font-weight: 800;
       color: #0f172a;
       margin-bottom: 8px;
-      line-height: 1.3;
+      padding-right: 70px;
+      line-height: 1.25;
     }
     .hero-desc {
-      color: #64748b;
+      color: #475569;
       font-size: 14px;
       line-height: 1.6;
       max-width: 680px;
-      margin-bottom: 24px;
+      margin-bottom: 18px;
     }
+    .btn-run {
+      background: #000000;
+      color: #ffffff;
+      border: none;
+      padding: 9px 18px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 13px;
+      cursor: pointer;
+      transition: opacity 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+    }
+    .btn-run:hover { opacity: 0.85; }
+    .btn-run:disabled { opacity: 0.6; cursor: not-allowed; }
     .bench-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 16px;
+      gap: 12px;
+      margin-top: 20px;
     }
     .bench-box {
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
       border-radius: 12px;
       padding: 16px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .bench-box-1 {
+      background: linear-gradient(135deg, #d1fae5 0%, #ecfdf5 100%);
+      border: 1px solid #a7f3d0;
+    }
+    .bench-box-2 {
+      background: linear-gradient(135deg, #dcfce7 0%, #f0fdf4 100%);
+      border: 1px solid #bbf7d0;
+    }
+    .bench-box-3 {
+      background: linear-gradient(135deg, #e0e7ff 0%, #f5f3ff 100%);
+      border: 1px solid #c7d2fe;
+    }
+    .bench-box-4 {
+      background: linear-gradient(135deg, #fce7f3 0%, #fdf4ff 100%);
+      border: 1px solid #fbcfe8;
     }
     .bench-label {
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 700;
-      color: #64748b;
-      margin-bottom: 6px;
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
+    .bench-box-1 .bench-label { color: #047857; }
+    .bench-box-2 .bench-label { color: #15803d; }
+    .bench-box-3 .bench-label { color: #4338ca; }
+    .bench-box-4 .bench-label { color: #9d174d; }
     .bench-val {
-      font-size: 22px;
+      font-size: 24px;
       font-weight: 800;
       color: #0f172a;
-      margin-bottom: 4px;
+      margin-top: 4px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
     }
     .bench-meta {
       font-size: 12px;
-      color: #16a34a;
       font-weight: 600;
+      margin-top: 2px;
     }
+    .bench-box-1 .bench-meta { color: #059669; }
+    .bench-box-2 .bench-meta { color: #16a34a; }
+    .bench-box-3 .bench-meta { color: #4f46e5; }
+    .bench-box-4 .bench-meta { color: #db2777; }
     .grid-2 {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-      gap: 20px;
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+    @media (min-width: 768px) {
+      .grid-2 { grid-template-columns: 1fr 1fr; }
     }
     .card {
       background: #ffffff;
       border: 1px solid #e2e8f0;
-      border-radius: 16px;
-      padding: 24px;
-      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.02);
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
     }
-    .card-title {
-      font-size: 16px;
+    .card-heading {
+      font-size: 15px;
       font-weight: 800;
-      margin-bottom: 16px;
+      color: #0f172a;
+      margin-bottom: 14px;
       display: flex;
       align-items: center;
       gap: 8px;
@@ -1054,65 +1355,111 @@ function getMaskPage(host = "localhost", isAuthEnabled = true, clientIp = "127.0
     .info-row {
       display: flex;
       justify-content: space-between;
-      padding: 10px 0;
+      align-items: center;
+      padding: 9px 0;
       border-bottom: 1px solid #f1f5f9;
       font-size: 13px;
     }
     .info-row:last-child { border-bottom: none; }
-    .info-k { color: #64748b; font-weight: 600; }
-    .info-v { color: #0f172a; font-weight: 700; font-family: monospace; }
+    .info-k { color: #475569; font-weight: 500; }
+    .info-v { color: #0f172a; font-family: monospace; font-weight: 700; }
+    .footer-bar {
+      background: linear-gradient(90deg, #dcfce7 0%, #bbf7d0 50%, #dcfce7 100%);
+      border: 1px solid #a7f3d0;
+      border-radius: 10px;
+      padding: 12px;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 700;
+      color: #065f46;
+      margin-top: 4px;
+    }
+    
+    /* Access Modal */
     .modal-overlay {
       position: fixed;
-      inset: 0;
+      top: 0; left: 0; width: 100%; height: 100%;
       background: rgba(15, 23, 42, 0.6);
-      backdrop-filter: blur(4px);
+      backdrop-filter: blur(6px);
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 16px;
+      z-index: 100;
       opacity: 0;
       pointer-events: none;
       transition: opacity 0.2s;
-      z-index: 100;
     }
-    .modal-overlay.open { opacity: 1; pointer-events: auto; }
+    .modal-overlay.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
     .modal-card {
       background: #ffffff;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
       border-radius: 16px;
-      max-width: 420px;
       width: 100%;
-      padding: 28px;
-      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+      max-width: 420px;
+      padding: 24px;
+      margin: 16px;
+    }
+    .modal-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+    .modal-title {
+      font-size: 17px;
+      font-weight: 800;
+      color: #0f172a;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn-close {
+      background: transparent;
+      border: none;
+      color: #64748b;
+      font-size: 18px;
+      cursor: pointer;
     }
     .modal-input {
       width: 100%;
-      padding: 12px 14px;
-      border: 1.5px solid #cbd5e1;
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
+      padding: 11px 14px;
       border-radius: 8px;
+      color: #0f172a;
+      font-family: monospace;
       font-size: 14px;
-      margin-bottom: 16px;
       outline: none;
+      margin-bottom: 14px;
     }
-    .modal-input:focus { border-color: #0f172a; }
+    .modal-input:focus {
+      border-color: #000000;
+      background: #ffffff;
+      box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.05);
+    }
     .btn-submit {
       width: 100%;
-      background: #0f172a;
+      background: #000000;
       color: #ffffff;
       border: none;
-      padding: 12px;
+      padding: 11px;
       border-radius: 8px;
       font-weight: 700;
       font-size: 14px;
       cursor: pointer;
     }
-    .btn-submit:hover { opacity: 0.9; }
-    .auth-error {
-      color: #dc2626;
+    .btn-submit:hover { opacity: 0.85; }
+    .auth-msg {
       font-size: 12px;
-      font-weight: 600;
-      margin-top: 12px;
-      display: none;
+      margin-top: 10px;
       text-align: center;
+      color: #dc2626;
+      font-weight: 600;
+      display: none;
     }
   </style>
 </head>
@@ -1120,10 +1467,15 @@ function getMaskPage(host = "localhost", isAuthEnabled = true, clientIp = "127.0
   <header>
     <div class="logo-area" onclick="handleLogoClick()">
       <div class="logo-icon">⚡</div>
-      <span>Galaxy Edge Network</span>
+      <div>
+        <div>EdgeTunnel</div>
+        <div>Cloud</div>
+      </div>
     </div>
     <div class="header-actions">
-      <div class="status-pill">● EDGE ACTIVE</div>
+      <div class="status-pill">
+        <span>EDGE OPERATIONAL</span>
+      </div>
       <button class="btn-portal" onclick="openPortalModal()">
         <span>🔒 Portal Access</span>
       </button>
@@ -1132,78 +1484,102 @@ function getMaskPage(host = "localhost", isAuthEnabled = true, clientIp = "127.0
 
   <main>
     <div class="hero-card">
-      <div class="hero-badge">Anycast Operational</div>
-      <h1 class="hero-title">Edge Network Telemetry &amp; Gateway Health</h1>
-      <p class="hero-desc">Global edge cluster monitoring, high-throughput Anycast proxy routing, DoH validation, and low-latency packet acceleration.</p>
+      <div class="hero-top-badge">Active</div>
+      <h1 class="hero-title">Edge Network Diagnostic &amp; Latency Monitor</h1>
+      <p class="hero-desc">Real-time edge server telemetry, DNS-over-HTTPS status verification, and full-duplex socket connectivity diagnostics for cloud edge clusters.</p>
       
+      <button class="btn-run" id="btnBench" onclick="runDiagnostics()">
+        ⚡ Re-Run Benchmark
+      </button>
+
       <div class="bench-grid">
-        <div class="bench-box">
-          <div class="bench-label">Cluster Status</div>
-          <div class="bench-val">99.99%</div>
-          <div class="bench-meta">● Optimal Health</div>
+        <div class="bench-box bench-box-1">
+          <div class="bench-label">Edge Roundtrip Ping</div>
+          <div class="bench-val" id="pingVal">-- ms</div>
+          <div class="bench-meta" id="pingStatus">Measuring...</div>
         </div>
-        <div class="bench-box">
-          <div class="bench-label">Edge Node</div>
-          <div class="bench-val">${colo}</div>
-          <div class="bench-meta">Anycast Gateway</div>
-        </div>
-        <div class="bench-box">
-          <div class="bench-label">Security Shield</div>
+        <div class="bench-box bench-box-2">
+          <div class="bench-label">DNS-Over-HTTPS (DoH)</div>
           <div class="bench-val">Active</div>
-          <div class="bench-meta">DDoS &amp; WAF Shield</div>
+          <div class="bench-meta">Cloudflare 1.1.1.1</div>
         </div>
-        <div class="bench-box">
-          <div class="bench-label">DoH Resolver</div>
-          <div class="bench-val">1.1.1.1</div>
-          <div class="bench-meta">Encrypted DNS</div>
+        <div class="bench-box bench-box-3">
+          <div class="bench-label">Socket Engine</div>
+          <div class="bench-val">Dual Active</div>
+          <div class="bench-meta">VLESS &amp; Trojan Ready</div>
+        </div>
+        <div class="bench-box bench-box-4">
+          <div class="bench-label">Edge Cluster Location</div>
+          <div class="bench-val">${colo}</div>
+          <div class="bench-meta">Anycast Network</div>
         </div>
       </div>
     </div>
 
     <div class="grid-2">
       <div class="card">
-        <div class="card-title">🌐 Client Telemetry</div>
+        <div class="card-heading">🌐 Connection Telemetry</div>
         <div class="info-row">
-          <span class="info-k">Client IP:</span>
+          <span class="info-k">Client Remote IP:</span>
           <span class="info-v">${clientIp}</span>
         </div>
         <div class="info-row">
-          <span class="info-k">Connected Host:</span>
+          <span class="info-k">Serving Host:</span>
           <span class="info-v">${host}</span>
         </div>
         <div class="info-row">
-          <span class="info-k">Protocol Support:</span>
-          <span class="info-v">HTTP/2, HTTP/3, gRPC, WS</span>
+          <span class="info-k">Supported Protocols:</span>
+          <span class="info-v" style="color: #0284c7;">VLESS &amp; Trojan (Dual)</span>
+        </div>
+        <div class="info-row">
+          <span class="info-k">Encryption &amp; Cipher:</span>
+          <span class="info-v">TLS 1.3 / AEAD ChaCha20</span>
         </div>
       </div>
 
       <div class="card">
-        <div class="card-title">🛡️ Gateway Diagnostics</div>
+        <div class="card-heading">🛡️ Edge Security &amp; Health</div>
         <div class="info-row">
-          <span class="info-k">Edge PoP:</span>
-          <span class="info-v">${colo}</span>
+          <span class="info-k">DDoS Mitigation:</span>
+          <span class="info-v" style="color: #16a34a;">Active (Strict)</span>
         </div>
         <div class="info-row">
-          <span class="info-k">Encryption:</span>
-          <span class="info-v">TLS 1.3 / ChaCha20</span>
+          <span class="info-k">Global Edge Cache:</span>
+          <span class="info-v">100% Operational</span>
         </div>
         <div class="info-row">
-          <span class="info-k">Network Mode:</span>
-          <span class="info-v" style="color: #16a34a;">Dual-Stack IPv4/IPv6</span>
+          <span class="info-k">Ad &amp; Tracker Blocker:</span>
+          <span class="info-v" style="color: #16a34a;">Active Filter</span>
+        </div>
+        <div class="info-row">
+          <span class="info-k">Service Status:</span>
+          <span class="info-v" style="color: #16a34a;">Optimal (99.99%)</span>
         </div>
       </div>
     </div>
+
+    <div class="footer-bar">
+      EdgeTunnel Cloud Network • High Availability Edge Gateway • All Systems Running
+    </div>
   </main>
 
+  <!-- Admin Auth Modal -->
   <div class="modal-overlay" id="portalModal">
     <div class="modal-card">
-      <h3 style="font-size: 18px; font-weight: 800; margin-bottom: 8px;">🔒 Gateway Administrative Access</h3>
-      <p style="font-size: 13px; color: #64748b; margin-bottom: 18px;">Enter your Trojan Password to access the full node management console.</p>
+      <div class="modal-head">
+        <div class="modal-title">
+          <span>🔒 Edge Gateway Access</span>
+        </div>
+        <button class="btn-close" onclick="closePortalModal()">✕</button>
+      </div>
+      <p style="font-size: 13px; color: #64748b; margin-bottom: 14px; line-height: 1.5;">
+        Please enter your Universal Unique Identifier (UUID), Trojan Password, or Access Key to unlock the administrative console.
+      </p>
       <form onsubmit="handlePortalLogin(event)">
-        <input type="password" id="authKeyInput" class="modal-input" placeholder="Enter Trojan Password" required autofocus />
-        <button type="submit" class="btn-submit" id="submitBtn">Unlock Dashboard</button>
+        <input type="password" id="authKeyInput" class="modal-input" placeholder="Enter UUID or Password" required autofocus />
+        <button type="submit" class="btn-submit" id="submitBtn">Unlock Console</button>
       </form>
-      <div class="auth-error" id="authErrorMsg">⚠️ Invalid Password. Access Denied.</div>
+      <div class="auth-msg" id="authErrorMsg">⚠️ Invalid UUID or Password. Access Denied.</div>
     </div>
   </div>
 
@@ -1221,6 +1597,9 @@ function getMaskPage(host = "localhost", isAuthEnabled = true, clientIp = "127.0
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'A' || e.key === 'a')) {
         openPortalModal();
       }
+      if (e.key === 'Escape') {
+        closePortalModal();
+      }
     });
 
     function openPortalModal() {
@@ -1230,6 +1609,7 @@ function getMaskPage(host = "localhost", isAuthEnabled = true, clientIp = "127.0
 
     function closePortalModal() {
       document.getElementById('portalModal').classList.remove('open');
+      document.getElementById('authErrorMsg').style.display = 'none';
     }
 
     async function handlePortalLogin(e) {
@@ -1250,540 +1630,578 @@ function getMaskPage(host = "localhost", isAuthEnabled = true, clientIp = "127.0
           body: JSON.stringify({ key })
         });
         const data = await resp.json();
-        if (data.success) {
-          window.location.href = data.redirect || '/';
+
+        if (resp.ok && data.success) {
+          window.location.href = data.redirect || ('/' + encodeURIComponent(key));
         } else {
+          errorMsg.textContent = data.message || "⚠️ Invalid Access Key / UUID.";
           errorMsg.style.display = 'block';
-          submitBtn.textContent = "Unlock Dashboard";
+          submitBtn.textContent = "Unlock Console";
           submitBtn.disabled = false;
         }
       } catch (err) {
-        errorMsg.style.display = 'block';
-        submitBtn.textContent = "Unlock Dashboard";
-        submitBtn.disabled = false;
+        window.location.href = '/' + encodeURIComponent(key);
       }
     }
+
+    async function runDiagnostics() {
+      const btn = document.getElementById('btnBench');
+      const pingVal = document.getElementById('pingVal');
+      const pingStatus = document.getElementById('pingStatus');
+
+      btn.disabled = true;
+      btn.textContent = "Testing Edge Latency...";
+      pingVal.textContent = "...";
+      pingStatus.textContent = "Measuring round-trip...";
+
+      const pings = [];
+      for (let i = 0; i < 3; i++) {
+        const start = performance.now();
+        try {
+          await fetch('/api/health?t=' + Date.now(), { cache: 'no-store' });
+          const latency = Math.round(performance.now() - start);
+          pings.push(latency);
+        } catch (e) {
+          pings.push(32);
+        }
+        await new Promise(r => setTimeout(r, 120));
+      }
+
+      const avg = Math.round(pings.reduce((a, b) => a + b, 0) / pings.length);
+      pingVal.textContent = avg + ' ms';
+      pingStatus.textContent = "Good Latency";
+      btn.disabled = false;
+      btn.textContent = "⚡ Re-Run Benchmark";
+    }
+
+    setTimeout(runDiagnostics, 500);
   </script>
 </body>
 </html>`;
 }
 
 // ============================================
-// Galaxy Trojan Dashboard (Full Visual Console)
+// GALAXY TUNNEL DUAL VLESS & TROJAN DASHBOARD
 // ============================================
-function getGalaxyPage(host, activePassword, activeWSPath, activeProxy, subData) {
-  const cleanPath = (activeWSPath || DEFAULT_WS_PATH).replace(/^\/+/, "");
-  const pwd = activePassword || DEFAULT_PASSWORD;
-  const pwdSha = sha224(pwd);
-
-  const subUrlHttps = `https://${host}/sub?pwd=${encodeURIComponent(pwd)}`;
-
-  return `<!DOCTYPE html>
+function getGalaxyPage(host = "localhost", currentUUID = DEFAULT_UUID, currentTrojanPass = DEFAULT_TROJAN_PASS, currentWSPath = DEFAULT_WS_PATH, currentProxy = DEFAULT_PROXY_IP, subData = null) {
+    const defaultSub = subData || generateAllConfigs(host, currentUUID, currentTrojanPass, currentWSPath, currentProxy);
+    const activeTrojan = currentTrojanPass || currentUUID;
+    
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Galaxy Tunnel Trojan Console | ${host}</title>
-  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+  <title>Galaxy-Tunnel | VLESS & Trojan Dual Console</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-      background: #0b0f19;
-      color: #f1f5f9;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
+    body, html {
+      width: 100%; height: 100%;
+      background: #02060d; overflow-x: hidden;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      color: #e0f2fe;
     }
-    header {
-      background: #111827;
-      border-bottom: 1px solid #1f2937;
-      padding: 16px 24px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      position: sticky;
-      top: 0;
-      z-index: 40;
+    .space-bg {
+      position: fixed; width: 100%; height: 100%; top: 0; left: 0;
+      background: 
+        radial-gradient(circle at 50% 35%, rgba(10, 45, 80, 0.7) 0%, transparent 65%),
+        radial-gradient(circle at 80% 80%, rgba(0, 150, 200, 0.15) 0%, transparent 50%),
+        #02060d;
+      z-index: 1;
     }
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
+    .starfield {
+      position: fixed; width: 100%; height: 100%; top: 0; left: 0;
+      background-image: 
+        radial-gradient(2px 2px at 20px 30px, #ffffff, rgba(0,0,0,0)),
+        radial-gradient(2px 2px at 40px 70px, rgba(0,212,255,0.8), rgba(0,0,0,0)),
+        radial-gradient(1px 1px at 90px 40px, #ffffff, rgba(0,0,0,0)),
+        radial-gradient(2px 2px at 160px 120px, rgba(0,212,255,0.9), rgba(0,0,0,0));
+      background-repeat: repeat; background-size: 220px 220px;
+      animation: starTwinkle 4s ease-in-out infinite alternate; opacity: 0.6;
+      z-index: 2;
     }
-    .brand-icon {
-      width: 36px;
-      height: 36px;
-      background: linear-gradient(135deg, #e11d48 0%, #be123c 100%);
-      border-radius: 10px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 18px;
-      font-weight: 900;
-      color: #ffffff;
-      box-shadow: 0 0 15px rgba(225, 29, 72, 0.4);
+    @keyframes starTwinkle {
+      0% { opacity: 0.4; transform: scale(1); }
+      100% { opacity: 0.8; transform: scale(1.02); }
     }
-    .brand-text h1 {
-      font-size: 17px;
-      font-weight: 800;
-      color: #ffffff;
-      letter-spacing: -0.3px;
+    .top-nav {
+      position: relative; z-index: 20;
+      width: 100%; max-width: 680px;
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: -10px;
     }
-    .brand-text p {
-      font-size: 12px;
-      color: #94a3b8;
-    }
-    .header-pills {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .badge-trojan {
-      background: rgba(225, 29, 72, 0.15);
-      border: 1px solid rgba(225, 29, 72, 0.4);
-      color: #fb7185;
-      font-size: 11px;
-      font-weight: 800;
-      padding: 5px 12px;
-      border-radius: 9999px;
-      letter-spacing: 0.5px;
-    }
-    .btn-logout {
-      background: #1f2937;
-      border: 1px solid #374151;
-      color: #94a3b8;
+    .btn-lock {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
       padding: 6px 14px;
-      border-radius: 8px;
+      border-radius: 20px;
       font-size: 12px;
       font-weight: 700;
-      cursor: pointer;
-      text-decoration: none;
-      transition: all 0.2s;
-    }
-    .btn-logout:hover {
-      background: #374151;
-      color: #ffffff;
-    }
-    main {
-      flex: 1;
-      max-width: 1100px;
-      width: 100%;
-      margin: 0 auto;
-      padding: 28px 16px;
-      display: flex;
-      flex-direction: column;
-      gap: 24px;
-    }
-    .banner {
-      background: linear-gradient(180deg, #1e1b4b 0%, #0f172a 100%);
-      border: 1px solid #312e81;
-      border-radius: 16px;
-      padding: 24px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 16px;
-    }
-    .banner-left h2 {
-      font-size: 20px;
-      font-weight: 800;
-      color: #ffffff;
-      margin-bottom: 6px;
-    }
-    .banner-left p {
-      color: #a5b4fc;
-      font-size: 13px;
-      max-width: 600px;
-      line-height: 1.5;
-    }
-    .banner-actions {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-    .btn-action {
-      background: #e11d48;
-      color: #ffffff;
-      border: none;
-      padding: 10px 18px;
-      border-radius: 8px;
-      font-weight: 700;
-      font-size: 13px;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      box-shadow: 0 4px 14px rgba(225, 29, 72, 0.3);
-      transition: opacity 0.2s;
-    }
-    .btn-action:hover { opacity: 0.9; }
-    .btn-secondary {
-      background: #1f2937;
-      border: 1px solid #374151;
-      color: #f1f5f9;
-      padding: 10px 16px;
-      border-radius: 8px;
-      font-weight: 700;
-      font-size: 13px;
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-    .btn-secondary:hover { background: #374151; }
-
-    .grid-nodes {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-      gap: 16px;
-    }
-    .node-card {
-      background: #111827;
-      border: 1px solid #1f2937;
-      border-radius: 14px;
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      transition: border-color 0.2s;
-    }
-    .node-card:hover {
-      border-color: #4b5563;
-    }
-    .node-head {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      margin-bottom: 12px;
-    }
-    .node-title {
-      font-size: 15px;
-      font-weight: 800;
-      color: #ffffff;
-    }
-    .node-tag {
-      font-size: 11px;
-      font-weight: 800;
-      padding: 3px 8px;
-      border-radius: 6px;
-    }
-    .tag-tls { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
-    .tag-grpc { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
-    .tag-http { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
-    .tag-proxy { background: rgba(236, 72, 153, 0.15); color: #f472b6; border: 1px solid rgba(236, 72, 153, 0.3); }
-    
-    .node-details {
-      background: #0b0f19;
-      border: 1px solid #1f2937;
-      border-radius: 8px;
-      padding: 10px 12px;
-      font-size: 12px;
-      font-family: monospace;
-      color: #94a3b8;
-      margin-bottom: 14px;
-      word-break: break-all;
-      line-height: 1.5;
-    }
-    .node-btns {
-      display: flex;
-      gap: 8px;
-    }
-    .btn-card {
-      flex: 1;
-      padding: 8px 12px;
-      border-radius: 6px;
-      font-size: 12px;
-      font-weight: 700;
-      cursor: pointer;
-      border: none;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 4px;
       transition: all 0.2s;
     }
-    .btn-card-copy { background: #1f2937; color: #ffffff; }
-    .btn-card-copy:hover { background: #374151; }
-    .btn-card-qr { background: #e11d48; color: #ffffff; }
-    .btn-card-qr:hover { opacity: 0.9; }
-
-    .config-card {
-      background: #111827;
-      border: 1px solid #1f2937;
-      border-radius: 14px;
-      padding: 22px;
-    }
-    .config-head {
-      font-size: 16px;
-      font-weight: 800;
+    .btn-lock:hover {
+      background: rgba(239, 68, 68, 0.3);
       color: #ffffff;
-      margin-bottom: 14px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
     }
-    .param-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 12px;
+    .main-container {
+      position: relative; z-index: 10;
+      min-height: 100vh;
+      display: flex; flex-direction: column; justify-content: center; align-items: center;
+      padding: 24px 16px;
+      gap: 20px;
+    }
+    .card-frame {
+      position: relative;
+      width: 100%; max-width: 440px; aspect-ratio: 1 / 1;
+      background: rgba(4, 14, 30, 0.8);
+      border: 1.5px solid rgba(0, 212, 255, 0.6);
+      box-shadow: 0 0 30px rgba(0, 212, 255, 0.25), inset 0 0 25px rgba(0, 212, 255, 0.1);
+      backdrop-filter: blur(12px);
+      display: flex; flex-direction: column; justify-content: space-between; align-items: center;
+      padding: 32px 24px 24px 24px; border-radius: 8px;
+    }
+    .graphic-container {
+      position: relative; width: 200px; height: 200px;
+      display: flex; justify-content: center; align-items: center;
+    }
+    .ring {
+      position: absolute; width: 220px; height: 70px;
+      border: 2px solid rgba(0, 230, 255, 0.85); border-radius: 50%;
+      transform: rotate(-28deg);
+      box-shadow: 0 0 15px rgba(0, 212, 255, 0.8), inset 0 0 15px rgba(0, 212, 255, 0.5);
+      pointer-events: none; animation: ringGlow 3s ease-in-out infinite alternate;
+    }
+    @keyframes ringGlow {
+      0% { opacity: 0.7; box-shadow: 0 0 12px rgba(0,212,255,0.6); }
+      100% { opacity: 1; box-shadow: 0 0 25px rgba(0,212,255,1); }
+    }
+    canvas { position: absolute; top: 0; left: 0; }
+    .content-bottom {
+      width: 100%; display: flex; flex-direction: column; align-items: center;
+      text-align: center; position: relative;
+    }
+    .title {
+      font-size: 28px; font-weight: 900; font-style: italic;
+      color: #ffffff; letter-spacing: 2px; text-transform: uppercase;
+      text-shadow: 0 0 12px rgba(255, 255, 255, 0.7); line-height: 1.1;
+    }
+    .subtitle {
+      font-size: 13px; font-weight: 700; color: #38bdf8;
+      letter-spacing: 3px; margin-top: 4px; text-transform: uppercase;
+    }
+    .status-row {
+      width: 100%; display: flex; justify-content: space-between; align-items: center;
+      margin-top: 14px;
+    }
+    .live-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: rgba(0, 229, 255, 0.15); border: 1px solid rgba(0, 229, 255, 0.4);
+      padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 700; color: #00e5ff;
+    }
+    .dot {
+      width: 7px; height: 7px; border-radius: 50%; background: #00e5ff;
+      box-shadow: 0 0 8px #00e5ff; animation: pulseDot 1.5s infinite;
+    }
+    @keyframes pulseDot { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .access-badge {
+      font-size: 13px; font-weight: 900; font-style: italic; color: #00e5ff;
+      text-transform: uppercase; text-align: right; letter-spacing: 1px; line-height: 1.2;
+      text-shadow: 0 0 15px rgba(0, 229, 255, 0.85);
+    }
+    
+    /* Config Panel */
+    .config-panel {
+      width: 100%; max-width: 680px;
+      background: rgba(4, 14, 30, 0.85);
+      border: 1px solid rgba(0, 212, 255, 0.35);
+      border-radius: 8px;
+      padding: 20px;
+      backdrop-filter: blur(14px);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    }
+    .panel-header {
+      display: flex; justify-content: space-between; align-items: center;
+      border-bottom: 1px solid rgba(0, 212, 255, 0.2);
+      padding-bottom: 12px; margin-bottom: 16px;
+    }
+    .panel-title {
+      font-size: 17px; font-weight: 800; color: #38bdf8;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .tag {
+      font-size: 11px; background: rgba(56, 189, 248, 0.2);
+      color: #38bdf8; padding: 2px 8px; border-radius: 4px; font-weight: normal;
+    }
+    .input-grid {
+      display: grid; grid-template-columns: 1fr; gap: 12px;
       margin-bottom: 16px;
     }
-    .param-box {
-      background: #0b0f19;
-      border: 1px solid #1f2937;
-      border-radius: 8px;
-      padding: 12px;
+    @media(min-width: 580px) {
+      .input-grid { grid-template-columns: 1fr 1fr; }
+      .input-full { grid-column: span 2; }
     }
-    .param-k { font-size: 11px; font-weight: 700; color: #64748b; margin-bottom: 4px; text-transform: uppercase; }
-    .param-v { font-size: 13px; font-weight: 700; color: #f1f5f9; font-family: monospace; word-break: break-all; }
-
-    .toast {
-      position: fixed;
-      bottom: 24px;
-      right: 24px;
-      background: #10b981;
-      color: #ffffff;
-      padding: 12px 20px;
-      border-radius: 10px;
-      font-size: 13px;
-      font-weight: 700;
-      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
-      opacity: 0;
-      transform: translateY(10px);
+    .input-group label {
+      display: block; font-size: 12px; font-weight: 600; color: #94a3b8;
+      margin-bottom: 4px;
+    }
+    .input-group input {
+      width: 100%; background: #071527;
+      border: 1px solid rgba(0, 212, 255, 0.3);
+      padding: 8px 12px; border-radius: 6px; color: #ffffff;
+      font-family: monospace; font-size: 13px; outline: none;
+      transition: border-color 0.2s;
+    }
+    .input-group input:focus {
+      border-color: #00e5ff; box-shadow: 0 0 8px rgba(0, 229, 255, 0.3);
+    }
+    .btn-row {
+      display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px;
+    }
+    .btn {
+      background: #0284c7; color: #ffffff;
+      border: none; padding: 8px 14px; border-radius: 6px;
+      font-size: 13px; font-weight: 700; cursor: pointer;
+      display: inline-flex; align-items: center; gap: 6px;
       transition: all 0.2s;
-      pointer-events: none;
-      z-index: 100;
     }
-    .toast.show { opacity: 1; transform: translateY(0); }
+    .btn:hover { background: #0369a1; transform: translateY(-1px); }
+    .btn-cyan { background: #00e5ff; color: #02060d; }
+    .btn-cyan:hover { background: #38bdf8; }
+    .btn-outline {
+      background: transparent; border: 1px solid rgba(0, 212, 255, 0.4);
+      color: #38bdf8;
+    }
+    .btn-outline:hover { background: rgba(0, 212, 255, 0.1); border-color: #00e5ff; }
 
-    .qr-modal {
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.8);
-      backdrop-filter: blur(4px);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 16px;
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity 0.2s;
-      z-index: 100;
+    .protocol-section-title {
+      font-size: 13px; font-weight: 800; color: #7dd3fc;
+      text-transform: uppercase; letter-spacing: 1px;
+      margin: 12px 0 8px 0; display: flex; align-items: center; gap: 6px;
     }
-    .qr-modal.open { opacity: 1; pointer-events: auto; }
-    .qr-card {
-      background: #111827;
-      border: 1px solid #374151;
-      border-radius: 16px;
-      padding: 24px;
-      max-width: 380px;
-      width: 100%;
-      text-align: center;
+    .node-list {
+      display: flex; flex-direction: column; gap: 10px;
     }
-    .qr-canvas-wrap {
-      background: #ffffff;
-      padding: 16px;
-      border-radius: 12px;
-      display: inline-block;
-      margin: 16px 0;
+    .node-card {
+      background: #06182c; border: 1px solid rgba(0, 212, 255, 0.2);
+      border-radius: 6px; padding: 12px;
+      display: flex; justify-content: space-between; align-items: center; gap: 10px;
     }
-    .btn-close-modal {
-      background: #1f2937;
-      border: 1px solid #374151;
-      color: #ffffff;
-      padding: 8px 16px;
-      border-radius: 8px;
-      font-weight: 700;
-      font-size: 13px;
+    .node-trojan {
+      border-color: rgba(245, 158, 11, 0.35);
+      background: #151421;
+    }
+    .node-info { overflow: hidden; }
+    .node-name { font-size: 13px; font-weight: 700; color: #f0f9ff; }
+    .node-desc { font-size: 11px; color: #64748b; font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .copy-btn {
+      flex-shrink: 0; background: rgba(0, 229, 255, 0.15); border: 1px solid rgba(0, 229, 255, 0.3);
+      color: #00e5ff; padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: 700;
       cursor: pointer;
     }
+    .copy-btn:hover { background: #00e5ff; color: #02060d; }
+    .copy-btn-trojan {
+      background: rgba(245, 158, 11, 0.15); border-color: rgba(245, 158, 11, 0.4);
+      color: #fbbf24;
+    }
+    .copy-btn-trojan:hover { background: #f59e0b; color: #02060d; }
+    .toast {
+      position: fixed; bottom: 20px; right: 20px;
+      background: #0284c7; color: #ffffff; padding: 10px 18px;
+      border-radius: 6px; font-size: 14px; font-weight: bold;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.5); z-index: 999;
+      opacity: 0; pointer-events: none; transition: opacity 0.3s;
+    }
+    .toast.show { opacity: 1; pointer-events: auto; }
   </style>
 </head>
 <body>
-  <header>
-    <div class="brand">
-      <div class="brand-icon">⚡</div>
-      <div class="brand-text">
-        <h1>Galaxy Tunnel (Trojan Protocol)</h1>
-        <p>High-Speed Trojan • WebSocket &amp; gRPC Multiplexing</p>
-      </div>
-    </div>
-    <div class="header-pills">
-      <div class="badge-trojan">● TROJAN ACTIVE</div>
-      <a href="/api/logout" class="btn-logout">Logout</a>
-    </div>
-  </header>
+  <div class="space-bg"></div>
+  <div class="starfield"></div>
 
-  <main>
-    <div class="banner">
-      <div class="banner-left">
-        <h2>⚡ One-Click Trojan Subscription</h2>
-        <p>Copy the Base64 auto-sync subscription link below for v2rayNG, Sing-Box, Shadowrocket, NekoBox, or Clash Meta.</p>
-      </div>
-      <div class="banner-actions">
-        <button class="btn-action" onclick="copyText('${subUrlHttps}', 'Subscription URL copied!')">
-          🔗 Copy Sub Link
-        </button>
-        <button class="btn-secondary" onclick="copyText('${subData.base64}', 'Raw Base64 Configs copied!')">
-          📋 Copy Raw Base64
-        </button>
-      </div>
+  <div class="main-container">
+    <div class="top-nav">
+      <span style="font-size: 13px; color: #38bdf8; font-weight: 700; letter-spacing: 1px;">🌌 VLESS &amp; TROJAN ACTIVE</span>
+      <button class="btn-lock" onclick="lockConsole()">🔒 Lock & Return to Disguise</button>
     </div>
 
-    <!-- Node Cards Grid -->
-    <div class="grid-nodes">
-      <!-- 1. TLS WS Node -->
-      <div class="node-card">
-        <div>
-          <div class="node-head">
-            <div class="node-title">1. Trojan + TLS + WebSocket</div>
-            <div class="node-tag tag-tls">Port 443</div>
-          </div>
-          <div class="node-details">
-            Host: ${host}<br>
-            SNI: ${host}<br>
-            Path: /${cleanPath}<br>
-            Security: TLS 1.3
-          </div>
-        </div>
-        <div class="node-btns">
-          <button class="btn-card btn-card-copy" onclick="copyText('${subData.links.tls}', 'Trojan TLS Link Copied!')">📋 Copy</button>
-          <button class="btn-card btn-card-qr" onclick="showQr('${subData.links.tls}', 'Trojan TLS (Port 443)')">📱 QR Code</button>
-        </div>
+    <!-- Visual Space Frame -->
+    <div class="card-frame">
+      <div class="graphic-container">
+        <div class="ring"></div>
+        <canvas id="nodeCanvas" width="200" height="200"></canvas>
       </div>
-
-      <!-- 2. gRPC Node -->
-      <div class="node-card">
-        <div>
-          <div class="node-head">
-            <div class="node-title">2. Trojan + gRPC Stream</div>
-            <div class="node-tag tag-grpc">Port 443 (HTTP/2)</div>
-          </div>
-          <div class="node-details">
-            Host: ${host}<br>
-            ServiceName: ${cleanPath}<br>
-            Transport: gRPC Multi-stream<br>
-            Anti-DPI: High
-          </div>
-        </div>
-        <div class="node-btns">
-          <button class="btn-card btn-card-copy" onclick="copyText('${subData.links.grpc}', 'Trojan gRPC Link Copied!')">📋 Copy</button>
-          <button class="btn-card btn-card-qr" onclick="showQr('${subData.links.grpc}', 'Trojan gRPC (Port 443)')">📱 QR Code</button>
-        </div>
-      </div>
-
-      <!-- 3. Direct HTTP Node -->
-      <div class="node-card">
-        <div>
-          <div class="node-head">
-            <div class="node-title">3. Trojan + Direct WS (Non-TLS)</div>
-            <div class="node-tag tag-http">Port 80</div>
-          </div>
-          <div class="node-details">
-            Host: ${host}<br>
-            Path: /${cleanPath}<br>
-            Security: None (Direct Port 80)<br>
-            Use: ISP SNI Bypass Test
-          </div>
-        </div>
-        <div class="node-btns">
-          <button class="btn-card btn-card-copy" onclick="copyText('${subData.links.http}', 'Trojan HTTP Link Copied!')">📋 Copy</button>
-          <button class="btn-card btn-card-qr" onclick="showQr('${subData.links.http}', 'Trojan HTTP (Port 80)')">📱 QR Code</button>
-        </div>
-      </div>
-
-      <!-- 4. Proxy IP Node -->
-      <div class="node-card">
-        <div>
-          <div class="node-head">
-            <div class="node-title">4. Trojan + Clean Proxy IP</div>
-            <div class="node-tag tag-proxy">${activeProxy || "Auto-Failover"}</div>
-          </div>
-          <div class="node-details">
-            Proxy Address: ${activeProxy || "cdn-b100.xn--b6gac.eu.org"}<br>
-            Host / SNI: ${host}<br>
-            Path: /${cleanPath}<br>
-            Auto GitHub Sync: Active
-          </div>
-        </div>
-        <div class="node-btns">
-          <button class="btn-card btn-card-copy" onclick="copyText('${subData.links.proxy || subData.links.tls}', 'Trojan ProxyIP Link Copied!')">📋 Copy</button>
-          <button class="btn-card btn-card-qr" onclick="showQr('${subData.links.proxy || subData.links.tls}', 'Trojan ProxyIP Node')">📱 QR Code</button>
+      <div class="content-bottom">
+        <h1 class="title">GALAXY-TUNNEL</h1>
+        <div class="subtitle">VLESS &amp; TROJAN DUAL ENGINE</div>
+        <div class="status-row">
+          <div class="live-badge"><div class="dot"></div> WORKER & PAGES OK</div>
+          <div class="access-badge">DUAL TUNNEL<br>ACTIVE</div>
         </div>
       </div>
     </div>
 
-    <!-- Active Parameters & Settings Info -->
-    <div class="config-card">
-      <div class="config-head">⚙️ Active Trojan Parameters</div>
-      <div class="param-grid">
-        <div class="param-box">
-          <div class="param-k">Trojan Password</div>
-          <div class="param-v">${pwd}</div>
+    <!-- Interactive Configurator -->
+    <div class="config-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          ⚡ Dual VLESS &amp; Trojan Links
+          <span class="tag">Zero-Rebuild Live Setup</span>
         </div>
-        <div class="param-box">
-          <div class="param-k">SHA-224 Hash (56 chars)</div>
-          <div class="param-v">${pwdSha}</div>
+        <button class="btn btn-outline" onclick="generateRandomUUID()" title="Generate new UUID">🎲 New UUID</button>
+      </div>
+
+      <div class="input-grid">
+        <div class="input-group input-full">
+          <label>UUID / Password (Works for Both VLESS &amp; Trojan):</label>
+          <input type="text" id="cfgUUID" value="${currentUUID}" oninput="updateConfigs()" placeholder="Enter your Cloudflare Dashboard UUID or click 🎲 New UUID" />
         </div>
-        <div class="param-box">
-          <div class="param-k">WebSocket Path / ServiceName</div>
-          <div class="param-v">/${cleanPath}</div>
+        <div class="input-group">
+          <label>Trojan Custom Password (Optional / Defaults to UUID):</label>
+          <input type="text" id="cfgTrojanPass" value="${currentTrojanPass || ""}" oninput="updateConfigs()" placeholder="Leave empty to use same UUID" />
         </div>
-        <div class="param-box">
-          <div class="param-k">Dynamic GitHub Proxy Source</div>
-          <div class="param-v">https://gprox-galaxy.github.io/PROXYIP.txt</div>
+        <div class="input-group">
+          <label>WebSocket Path (WS_PATH):</label>
+          <input type="text" id="cfgPath" value="${currentWSPath}" oninput="updateConfigs()" placeholder="galaxy-tunnel" />
+        </div>
+        <div class="input-group input-full">
+          <label>Fallback / CDN Proxy IP:</label>
+          <input type="text" id="cfgProxy" value="${currentProxy}" oninput="updateConfigs()" placeholder="cdn-b100.xn--b6gac.eu.org" />
         </div>
       </div>
-    </div>
-  </main>
 
-  <div class="toast" id="toastMsg">Copied to clipboard!</div>
-
-  <!-- QR Code Modal -->
-  <div class="qr-modal" id="qrModal">
-    <div class="qr-card">
-      <h3 id="qrModalTitle" style="font-size: 16px; font-weight: 800; color: #ffffff;">Trojan Node QR</h3>
-      <div class="qr-canvas-wrap">
-        <canvas id="qrCanvas"></canvas>
+      <div class="btn-row">
+        <button class="btn btn-cyan" onclick="copyAllNodes()">📋 Copy All (Base64 Sub)</button>
+        <button class="btn btn-outline" onclick="openSubUrl()">🔗 Open Subscription Link</button>
+        <button class="btn btn-outline" onclick="copySubUrl()">📋 Copy Sub URL</button>
       </div>
-      <p style="font-size: 12px; color: #94a3b8; margin-bottom: 16px;">Scan with v2rayNG, Sing-box, or Shadowrocket</p>
-      <button class="btn-close-modal" onclick="closeQrModal()">Close</button>
+
+      <!-- Trojan Nodes -->
+      <div class="protocol-section-title">🛡️ Trojan Protocol Nodes (Using Same UUID / Password)</div>
+      <div class="node-list">
+        <div class="node-card node-trojan">
+          <div class="node-info">
+            <div class="node-name">🛡️ Trojan + TLS (Port 443 WS)</div>
+            <div class="node-desc" id="trojanTlsDesc">Trojan over WS TLS / SHA-224 Authenticated</div>
+          </div>
+          <button class="copy-btn copy-btn-trojan" onclick="copyNode('trojanTls')">Copy Link</button>
+        </div>
+
+        <div class="node-card node-trojan">
+          <div class="node-info">
+            <div class="node-name">⚡ Trojan + gRPC (Port 443)</div>
+            <div class="node-desc" id="trojanGrpcDesc">Trojan over gRPC Multiplexed Stream</div>
+          </div>
+          <button class="copy-btn copy-btn-trojan" onclick="copyNode('trojanGrpc')">Copy Link</button>
+        </div>
+      </div>
+
+      <!-- VLESS Nodes -->
+      <div class="protocol-section-title" style="margin-top: 18px;">⚡ VLESS Protocol Nodes</div>
+      <div class="node-list">
+        <div class="node-card">
+          <div class="node-info">
+            <div class="node-name">🔒 VLESS + TLS (Port 443 WS)</div>
+            <div class="node-desc" id="tlsDesc">WS / TLS Enabled / Best for v2rayNG &amp; Shadowrocket</div>
+          </div>
+          <button class="copy-btn" onclick="copyNode('vlessTls')">Copy Link</button>
+        </div>
+
+        <div class="node-card">
+          <div class="node-info">
+            <div class="node-name">⚡ VLESS + gRPC (Port 443)</div>
+            <div class="node-desc" id="grpcDesc">gRPC HTTP/2 Low Latency Stream</div>
+          </div>
+          <button class="copy-btn" onclick="copyNode('vlessGrpc')">Copy Link</button>
+        </div>
+
+        <div class="node-card">
+          <div class="node-info">
+            <div class="node-name">🌐 VLESS + Direct HTTP (Port 80)</div>
+            <div class="node-desc" id="httpDesc">Standard WS Port 80</div>
+          </div>
+          <button class="copy-btn" onclick="copyNode('vlessHttp')">Copy Link</button>
+        </div>
+      </div>
     </div>
   </div>
 
+  <div id="toast" class="toast">Copied to clipboard!</div>
+
   <script>
-    function showToast(msg) {
-      const t = document.getElementById('toastMsg');
-      t.textContent = msg;
-      t.classList.add('show');
-      setTimeout(() => t.classList.remove('show'), 2500);
+    // Star Node Graphic Animation
+    const canvas = document.getElementById('nodeCanvas');
+    const ctx = canvas.getContext('2d');
+    const numNodes = 30; const nodes = []; const radius = 65;
+    let angleX = 0.004; let angleY = 0.007;
+
+    for (let i = 0; i < numNodes; i++) {
+      let theta = Math.acos(Math.random() * 2 - 1);
+      let phi = Math.random() * Math.PI * 2;
+      nodes.push({
+        x: radius * Math.sin(theta) * Math.cos(phi),
+        y: radius * Math.sin(theta) * Math.sin(phi),
+        z: radius * Math.cos(theta)
+      });
     }
 
-    function copyText(text, successMsg) {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(() => showToast(successMsg));
-      } else {
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-        showToast(successMsg);
+    function rotateX(node, angle) {
+      let cos = Math.cos(angle); let sin = Math.sin(angle);
+      let y1 = node.y * cos - node.z * sin;
+      let z1 = node.z * cos + node.y * sin;
+      node.y = y1; node.z = z1;
+    }
+
+    function rotateY(node, angle) {
+      let cos = Math.cos(angle); let sin = Math.sin(angle);
+      let x1 = node.x * cos - node.z * sin;
+      let z1 = node.z * cos + node.x * sin;
+      node.x = x1; node.z = z1;
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      let cx = canvas.width / 2; let cy = canvas.height / 2;
+
+      nodes.forEach(node => {
+        rotateX(node, angleX);
+        rotateY(node, angleY);
+      });
+
+      ctx.strokeStyle = 'rgba(0, 220, 255, 0.35)';
+      ctx.lineWidth = 1;
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          let dist = Math.hypot(nodes[i].x - nodes[j].x, nodes[i].y - nodes[j].y, nodes[i].z - nodes[j].z);
+          if (dist < 55) {
+            ctx.beginPath();
+            ctx.moveTo(nodes[i].x + cx, nodes[i].y + cy);
+            ctx.lineTo(nodes[j].x + cx, nodes[j].y + cy);
+            ctx.stroke();
+          }
+        }
+      }
+
+      nodes.forEach(node => {
+        let size = (node.z + radius) / (2 * radius) * 2.8 + 1.8;
+        ctx.beginPath();
+        ctx.arc(node.x + cx, node.y + cy, size, 0, Math.PI * 2);
+        ctx.fillStyle = '#00f0ff';
+        ctx.shadowBlur = 8; ctx.shadowColor = '#00f0ff';
+        ctx.fill(); ctx.shadowBlur = 0;
+      });
+
+      requestAnimationFrame(draw);
+    }
+    draw();
+
+    // Configuration & Dynamic Link Generator
+    const currentHost = window.location.host || "${host}";
+    let generatedLinks = {};
+
+    function updateConfigs() {
+      const uuid = (document.getElementById('cfgUUID').value || "${currentUUID}").trim();
+      const customTrojan = (document.getElementById('cfgTrojanPass').value || "").trim();
+      const trojanKey = customTrojan || uuid;
+      const path = (document.getElementById('cfgPath').value || "${currentWSPath}").trim().replace(/^\\/+/, "");
+      const proxy = (document.getElementById('cfgProxy').value || "${currentProxy}").trim();
+      const cleanHost = currentHost.replace(/[^a-zA-Z0-9.-]/g, "");
+
+      const vlessTls = "vless://" + uuid + "@" + currentHost + ":443?encryption=none&security=tls&sni=" + currentHost + "&type=ws&host=" + currentHost + "&path=%2F" + encodeURIComponent(path) + "%3Fed%3D2048#Galaxy-VLESS-TLS%20(" + cleanHost + ")";
+      const vlessGrpc = "vless://" + uuid + "@" + currentHost + ":443?encryption=none&security=tls&sni=" + currentHost + "&type=grpc&serviceName=" + encodeURIComponent(path) + "#Galaxy-VLESS-gRPC%20(" + cleanHost + ")";
+      const vlessHttp = "vless://" + uuid + "@" + currentHost + ":80?encryption=none&security=none&type=ws&host=" + currentHost + "&path=%2F" + encodeURIComponent(path) + "%3Fed%3D2048#Galaxy-VLESS-HTTP%20(" + cleanHost + ")";
+
+      const trojanTls = "trojan://" + encodeURIComponent(trojanKey) + "@" + currentHost + ":443?security=tls&sni=" + currentHost + "&type=ws&host=" + currentHost + "&path=%2F" + encodeURIComponent(path) + "%3Fed%3D2048#Galaxy-Trojan-TLS%20(" + cleanHost + ")";
+      const trojanGrpc = "trojan://" + encodeURIComponent(trojanKey) + "@" + currentHost + ":443?security=tls&sni=" + currentHost + "&type=grpc&serviceName=" + encodeURIComponent(path) + "#Galaxy-Trojan-gRPC%20(" + cleanHost + ")";
+
+      const allLinks = [vlessTls, trojanTls, vlessGrpc, trojanGrpc, vlessHttp];
+
+      generatedLinks = {
+        vlessTls,
+        vlessGrpc,
+        vlessHttp,
+        trojanTls,
+        trojanGrpc,
+        all: allLinks.join('\\n'),
+        base64: btoa(unescape(encodeURIComponent(allLinks.join('\\n'))))
+      };
+    }
+    updateConfigs();
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      toast.textContent = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2500);
+    }
+
+    function copyNode(type) {
+      const uuid = (document.getElementById('cfgUUID').value || "").trim();
+      if (!uuid) {
+        showToast('⚠️ Please enter or generate a UUID first!');
+        return;
+      }
+      if (generatedLinks[type]) {
+        navigator.clipboard.writeText(generatedLinks[type]).then(() => {
+          showToast('Copied ' + type.toUpperCase() + ' link!');
+        });
       }
     }
 
-    function showQr(link, title) {
-      document.getElementById('qrModalTitle').textContent = title;
-      const canvas = document.getElementById('qrCanvas');
-      QRCode.toCanvas(canvas, link, { width: 220, margin: 1 }, function (error) {
-        if (error) console.error(error);
-      });
-      document.getElementById('qrModal').classList.add('open');
+    function copyAllNodes() {
+      const uuid = (document.getElementById('cfgUUID').value || "").trim();
+      if (!uuid) {
+        showToast('⚠️ Please enter or generate a UUID first!');
+        return;
+      }
+      if (generatedLinks.base64) {
+        navigator.clipboard.writeText(generatedLinks.base64).then(() => {
+          showToast('Copied Base64 subscription with VLESS & Trojan!');
+        });
+      }
     }
 
-    function closeQrModal() {
-      document.getElementById('qrModal').classList.remove('open');
+    function getSubUrl() {
+      const uuid = (document.getElementById('cfgUUID').value || "${currentUUID}").trim();
+      const trojan = (document.getElementById('cfgTrojanPass').value || "").trim();
+      const path = (document.getElementById('cfgPath').value || "${currentWSPath}").trim();
+      const proxy = (document.getElementById('cfgProxy').value || "${currentProxy}").trim();
+      let url = window.location.origin + "/sub?uuid=" + encodeURIComponent(uuid) + "&path=" + encodeURIComponent(path) + "&proxyip=" + encodeURIComponent(proxy);
+      if (trojan) {
+        url += "&trojan=" + encodeURIComponent(trojan);
+      }
+      return url;
+    }
+
+    function copySubUrl() {
+      const subUrl = getSubUrl();
+      navigator.clipboard.writeText(subUrl).then(() => {
+        showToast('Copied Subscription URL!');
+      });
+    }
+
+    function openSubUrl() {
+      window.open(getSubUrl(), '_blank');
+    }
+
+    function generateRandomUUID() {
+      const newUUID = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const r = Math.random() * 16 | 0;
+        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+      });
+      document.getElementById('cfgUUID').value = newUUID;
+      updateConfigs();
+      showToast('Generated new UUID (powers both VLESS & Trojan)!');
+    }
+
+    function lockConsole() {
+      document.cookie = "galaxy_auth=0; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+      window.location.href = "/api/logout";
     }
   </script>
 </body>
